@@ -11,11 +11,11 @@ import type { WebviewHub } from './webviewHub'
 import type { ViewId } from '../../shared/protocol'
 
 const VIEW_IDS: Record<ViewId, string> = {
-  search: 'mlxConsole.search',
-  models: 'mlxConsole.models',
-  downloads: 'mlxConsole.downloads',
+  dashboard: 'mlxConsole.dashboard',
   server: 'mlxConsole.server',
-  impact: 'mlxConsole.impact',
+  models: 'mlxConsole.models',
+  search: 'mlxConsole.search',
+  downloads: 'mlxConsole.downloads',
 }
 
 class MlxWebviewProvider implements vscode.WebviewViewProvider {

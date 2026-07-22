@@ -3,7 +3,7 @@
  * Types only — safe to import from both the Node and browser bundles.
  */
 
-export type ViewId = 'search' | 'models' | 'downloads' | 'server' | 'impact'
+export type ViewId = 'dashboard' | 'server' | 'models' | 'search' | 'downloads'
 
 export type FitVerdict = 'fits' | 'tight' | 'too-large' | 'unknown'
 

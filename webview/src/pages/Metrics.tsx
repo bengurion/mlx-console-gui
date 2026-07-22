@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { rpc, onPush } from '../api'
+import { rpc, onPush, copy } from '../api'
 import { bytes } from '../format'
 import type { MetricsSnapshot, ModelProfile } from '../../../src/shared/protocol'
 
@@ -204,10 +204,12 @@ function PerProcessGpu({ serverPid }: { serverPid?: number }) {
   const [samples, setSamples] = useState<ProcessGpuSample[]>()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
+  const [needsAuth, setNeedsAuth] = useState(false)
 
   async function sample() {
     setBusy(true)
     setError(undefined)
+    setNeedsAuth(false)
     try {
       const res = (await rpc('samplePerProcessGpu')) as {
         ok: boolean
@@ -216,7 +218,8 @@ function PerProcessGpu({ serverPid }: { serverPid?: number }) {
         needsAuth?: boolean
       }
       if (res.ok) setSamples(res.samples ?? [])
-      else if (!res.needsAuth) setError(res.error ?? 'Sampling failed.')
+      else if (res.needsAuth) setNeedsAuth(true)
+      else setError(res.error ?? 'Sampling failed.')
     } catch (e) {
       setError(String(e))
     } finally {
@@ -267,11 +270,33 @@ function PerProcessGpu({ serverPid }: { serverPid?: number }) {
         </div>
       )}
 
+      {needsAuth && <RootCommand />}
+
       {error && (
         <div className="small" style={{ color: 'var(--vscode-errorForeground, #f85149)' }}>
           {error}
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * When the host cannot open a terminal — the headless daemon has none — hand
+ * over the exact command instead of failing silently. It is read-only
+ * telemetry, and short enough to read before running.
+ */
+function RootCommand() {
+  const command = 'sudo powermetrics --samplers gpu_power --show-process-gpu -n 1 -i 1000'
+  return (
+    <div className="col" style={{ gap: 4, marginTop: 4 }}>
+      <div className="small">Run this yourself, then sample again:</div>
+      <pre className="snippet">{command}</pre>
+      <div className="row">
+        <button className="secondary" onClick={() => copy(command)}>
+          Copy command
+        </button>
+      </div>
     </div>
   )
 }

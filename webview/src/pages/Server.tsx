@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { rpc, onPush, copy, openSettings } from '../api'
-import { MetricsPage } from './Metrics'
 import { SettingsPage } from './Settings'
 import type {
   EnvStatusLite,
@@ -104,8 +103,7 @@ export function ServerPage() {
       {/* All settings */}
       <SettingsPage />
 
-      {/* Metrics */}
-      <MetricsPage />
+      {/* Metrics moved to the Dashboard view, where the measurements live. */}
 
       {/* External clients */}
       {ext && (

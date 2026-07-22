@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { onPush, rpc, copy } from '../api'
+import { onPush } from '../api'
 import { bytes } from '../format'
+import { MetricsPage } from './Metrics'
 import type { MetricsSnapshot, ModelProfile, ServerStatusLite } from '../../../src/shared/protocol'
 
 /**
@@ -25,14 +26,11 @@ import type { MetricsSnapshot, ModelProfile, ServerStatusLite } from '../../../s
 type Sample = { at: number; occupied?: number; swapOut?: number; gpu?: number }
 const HISTORY = 90 // ~3 minutes at the 2s sample rate
 
-export function ImpactPage() {
+export function DashboardPage() {
   const [m, setMetrics] = useState<MetricsSnapshot>()
   const [status, setStatus] = useState<ServerStatusLite>()
   const [profile, setProfile] = useState<ModelProfile>()
   const [history, setHistory] = useState<Sample[]>([])
-  const [gpuProcs, setGpuProcs] = useState<{ name: string; pid: number; gpuMsPerS: number }[]>()
-  const [gpuError, setGpuError] = useState<string>()
-  const [sampling, setSampling] = useState(false)
 
   useEffect(
     () =>
@@ -74,26 +72,6 @@ export function ImpactPage() {
 
   const swapping = (m?.paging?.swapOutBytesPerSec ?? 0) > 0
   const swapUsed = m?.swap?.usedBytes ?? 0
-
-  const requestGpuAttribution = async () => {
-    setSampling(true)
-    setGpuError(undefined)
-    try {
-      const res = await rpc<{
-        ok: boolean
-        samples?: { name: string; pid: number; gpuMsPerS: number }[]
-        error?: string
-        needsAuth?: boolean
-      }>('samplePerProcessGpu')
-      if (res.ok) setGpuProcs(res.samples ?? [])
-      else if (res.needsAuth) setGpuError('needs-auth')
-      else setGpuError(res.error ?? 'Sampling failed.')
-    } catch (e) {
-      setGpuError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setSampling(false)
-    }
-  }
 
   return (
     <div className="col">
@@ -147,60 +125,14 @@ export function ImpactPage() {
         )}
       </div>
 
+      {/* The device, CPU, memory and GPU panel — including the ceiling editor
+          and the per-process GPU sampler — lives here now rather than under
+          the server controls, since this view is where measurements belong. */}
+      <MetricsPage />
+
       <PressureCard metrics={m} />
 
       {profile && <ContextCostCard profile={profile} headroom={budget?.free} />}
-
-      <div className="card col">
-        <div className="row spread">
-          <strong>Per-process GPU</strong>
-          <button disabled={sampling} onClick={requestGpuAttribution}>
-            {sampling ? 'Sampling…' : gpuProcs ? 'Sample again' : 'Enable with root'}
-          </button>
-        </div>
-        <div className="small muted">
-          <code>powermetrics</code> attributes GPU <em>time</em> per process and needs root. It is
-          read-only telemetry; the command runs in a terminal so you type your own password, and
-          nothing here ever sees it.
-        </div>
-
-        {gpuError === 'needs-auth' && <RootFallback />}
-        {gpuError && gpuError !== 'needs-auth' && (
-          <div className="small" style={{ color: 'var(--vscode-errorForeground)' }}>
-            {gpuError}
-          </div>
-        )}
-
-        {gpuProcs &&
-          (gpuProcs.length ? (
-            <table style={{ width: '100%', fontSize: '0.9em', marginTop: 6 }}>
-              <tbody>
-                {gpuProcs
-                  .slice()
-                  .sort((a, b) => b.gpuMsPerS - a.gpuMsPerS)
-                  .slice(0, 12)
-                  .map((p) => (
-                    <tr key={p.pid}>
-                      <td>{p.name}</td>
-                      <td className="muted" style={{ width: 70 }}>
-                        {p.pid}
-                      </td>
-                      <td style={{ width: 110, textAlign: 'right' }}>
-                        {p.gpuMsPerS.toFixed(1)} ms/s
-                      </td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          ) : (
-            <div className="small muted">No process used the GPU during the sample.</div>
-          ))}
-
-        <div className="small muted">
-          GPU <em>time</em> only. There is no per-process GPU <em>memory</em> figure to be had on
-          macOS, at any privilege level — which is why the budget above infers it.
-        </div>
-      </div>
 
       <TrendCard history={history} ceiling={ceiling} />
     </div>
@@ -384,26 +316,6 @@ function TrendCard({ history, ceiling }: { history: Sample[]; ceiling?: number }
         <span style={{ color: 'var(--vscode-charts-blue, #3794ff)' }}>■</span> memory held against
         the ceiling · <span style={{ color: 'var(--vscode-errorForeground)' }}>■</span> swap-out
         rate (peak {bytes(peakSwap)}/s)
-      </div>
-    </div>
-  )
-}
-
-/** When the host cannot elevate for you, hand over the exact command. */
-function RootFallback() {
-  const command =
-    'sudo powermetrics --samplers gpu_power --show-process-gpu -n 1 -i 1000'
-  return (
-    <div className="col" style={{ gap: 4, marginTop: 4 }}>
-      <div className="small">
-        This host cannot open a terminal for you. Run it yourself — it is read-only, and you can
-        read it before you run it:
-      </div>
-      <pre className="snippet">{command}</pre>
-      <div className="row">
-        <button className="secondary" onClick={() => copy(command)}>
-          Copy command
-        </button>
       </div>
     </div>
   )

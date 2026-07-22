@@ -127,7 +127,7 @@ test('the page serves the panel bundle and mounts the requested view', async () 
 test('an unknown view falls back rather than mounting nothing', async () => {
   await withServer(async (base) => {
     const html = await (await fetch(`${base}/?view=../etc/passwd`)).text()
-    assert.match(html, /__MLX_VIEW__ = "server"/)
+    assert.match(html, /__MLX_VIEW__ = "dashboard"/, 'falls back to the default view')
   })
 })
 

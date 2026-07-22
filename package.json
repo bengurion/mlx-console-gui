@@ -49,6 +49,11 @@
       "mlxConsole": [
         {
           "type": "webview",
+          "id": "mlxConsole.dashboard",
+          "name": "Dashboard"
+        },
+        {
+          "type": "webview",
           "id": "mlxConsole.search",
           "name": "Search"
         },
@@ -66,11 +71,6 @@
           "type": "webview",
           "id": "mlxConsole.server",
           "name": "Server & Settings"
-        },
-        {
-          "type": "webview",
-          "id": "mlxConsole.impact",
-          "name": "Local impact"
         }
       ]
     },

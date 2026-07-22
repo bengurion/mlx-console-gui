@@ -5,7 +5,7 @@ import { SearchPage } from './pages/Search'
 import { ModelsPage } from './pages/Models'
 import { DownloadsPage } from './pages/Downloads'
 import { ServerPage } from './pages/Server'
-import { ImpactPage } from './pages/Impact'
+import { DashboardPage } from './pages/Dashboard'
 import type { ViewId } from '../../src/shared/protocol'
 
 declare global {
@@ -17,11 +17,11 @@ declare global {
 }
 
 const pages: Record<ViewId, ComponentType> = {
-  search: SearchPage,
-  models: ModelsPage,
-  downloads: DownloadsPage,
+  dashboard: DashboardPage,
   server: ServerPage,
-  impact: ImpactPage,
+  models: ModelsPage,
+  search: SearchPage,
+  downloads: DownloadsPage,
 }
 
 const container = document.getElementById('root')
@@ -61,5 +61,5 @@ function show(view: ViewId): void {
 
 if (container) {
   window.__MLX_SHOW__ = show
-  show(window.__MLX_VIEW__ ?? 'server')
+  show(window.__MLX_VIEW__ ?? 'dashboard')
 }

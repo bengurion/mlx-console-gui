@@ -330,11 +330,11 @@ interface BridgeClient {
 }
 
 const VIEWS = [
+  { id: 'dashboard', label: 'Dashboard' },
   { id: 'server', label: 'Server & settings' },
   { id: 'models', label: 'Models' },
   { id: 'search', label: 'Search Hugging Face' },
   { id: 'downloads', label: 'Downloads' },
-  { id: 'impact', label: 'Local impact' },
 ] as const
 
 /**
@@ -352,7 +352,7 @@ const VIEWS = [
  */
 function appShell(args: { nonce: string; token: string; label: string; view: string | null }): string {
   const { nonce, token, label } = args
-  const view = VIEWS.some((v) => v.id === args.view) ? args.view : 'server'
+  const view = VIEWS.some((v) => v.id === args.view) ? args.view : 'dashboard'
   // Buttons, not links: switching views must not reload the page. A reload
   // re-downloads the bundle, drops the event stream and re-runs every view's
   // initial load — which showed up as a fresh Hugging Face search on every
