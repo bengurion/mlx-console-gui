@@ -106,6 +106,44 @@ export function MetricsPage() {
         detail={m?.cpu.percent !== undefined ? `${m.cpu.percent.toFixed(0)}%` : '—'}
       />
 
+      {/*
+        Per-core, because the average hides the shape of the work. Prompt
+        prefill saturates every core; token generation is memory-bound and
+        often pins one or two while the rest idle — which averages to a number
+        that looks like nothing is running.
+      */}
+      {m?.cpu.perCore && m.cpu.perCore.length > 1 && (
+        <div className="row" style={{ gap: 2, marginBottom: 6 }} title="Per-core utilisation">
+          {m.cpu.perCore.map((pct, i) => (
+            <div
+              key={i}
+              title={`Core ${i}: ${pct.toFixed(0)}%`}
+              style={{
+                flex: 1,
+                height: 18,
+                minWidth: 3,
+                background: 'rgba(128,128,128,0.25)',
+                borderRadius: 2,
+                display: 'flex',
+                alignItems: 'flex-end',
+              }}
+            >
+              <div
+                style={{
+                  width: '100%',
+                  height: `${Math.max(2, Math.min(100, pct))}%`,
+                  background:
+                    pct > 80
+                      ? 'var(--vscode-editorWarning-foreground)'
+                      : 'var(--vscode-charts-blue, #3794ff)',
+                  borderRadius: 2,
+                }}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+
       {m?.memory && (
         <Bar
           label="Memory"
@@ -247,6 +285,7 @@ function PerProcessGpu({ serverPid }: { serverPid?: number }) {
   const [enabled, setEnabled] = useState<boolean>()
   const [secret, setSecret] = useState('')
   const [updatedAt, setUpdatedAt] = useState<number>()
+  const [command, setCommand] = useState<string>()
 
   // Once authorised the host samples on a timer and pushes the result, so this
   // stays live without the view asking for anything.
@@ -262,8 +301,11 @@ function PerProcessGpu({ serverPid }: { serverPid?: number }) {
   )
 
   useEffect(() => {
-    void rpc<{ enabled: boolean }>('rootGpuStatus')
-      .then((r) => setEnabled(r.enabled))
+    void rpc<{ enabled: boolean; command: string }>('rootGpuStatus')
+      .then((r) => {
+        setEnabled(r.enabled)
+        setCommand(r.command)
+      })
       .catch(() => undefined)
   }, [])
 
@@ -345,15 +387,18 @@ function PerProcessGpu({ serverPid }: { serverPid?: number }) {
         </span>
       </div>
 
-      {enabled === false && (
+      {/* Prompt whenever authorisation is what is missing — including after a
+          sample came back needing it, not only on a cold start. */}
+      {(enabled === false || needsAuth) && (
         <div className="col" style={{ gap: 4 }}>
           <div className="small muted">
             Figures above are device-wide (IOAccelerator). Attributing GPU time to a process needs{' '}
             <code>powermetrics</code>, which requires root.
           </div>
           <div className="small muted">
-            Authorise once and it samples automatically every 20 seconds. Your credential is used
-            here only to allow that single read-only command, and is not kept.
+            Authorise once and it samples automatically every 20 seconds. Your password is used
+            here only to permit that single read-only command, and is not stored — see{' '}
+            <code>rootAccess.ts</code> for exactly what is granted.
           </div>
           <div className="row" style={{ gap: 6 }}>
             <input
@@ -398,7 +443,10 @@ function PerProcessGpu({ serverPid }: { serverPid?: number }) {
         </div>
       )}
 
-      {needsAuth && <RootCommand />}
+      {/* Secondary: the same command to run yourself, for anyone who would
+          rather not type a password into an app — which is a reasonable
+          preference, not a fallback for failure. */}
+      {needsAuth && <RootCommand command={command} />}
 
       {error && (
         <div className="small" style={{ color: 'var(--vscode-errorForeground, #f85149)' }}>
@@ -414,8 +462,8 @@ function PerProcessGpu({ serverPid }: { serverPid?: number }) {
  * over the exact command instead of failing silently. It is read-only
  * telemetry, and short enough to read before running.
  */
-function RootCommand() {
-  const command = 'sudo powermetrics --samplers gpu_power --show-process-gpu -n 1 -i 1000'
+function RootCommand({ command }: { command?: string }) {
+  if (!command) return null
   return (
     <div className="col" style={{ gap: 4, marginTop: 4 }}>
       <div className="small">Run this yourself, then sample again:</div>

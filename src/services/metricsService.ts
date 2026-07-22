@@ -8,6 +8,7 @@ import { Emitter, type Disposable } from '../core/events'
 import { Config } from '../config'
 import {
   cpuPercent,
+  perCorePercent,
   cpuSample,
   pagingRates,
   parseDeviceInfo,
@@ -161,6 +162,7 @@ export class MetricsService implements Disposable {
       percent: cpuPercent(this.prevCpu, next),
       cores: os.cpus().length,
       load1: os.loadavg()[0],
+      perCore: perCorePercent(this.prevCpu, next),
     }
     this.prevCpu = next
 

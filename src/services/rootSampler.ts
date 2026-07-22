@@ -29,6 +29,12 @@ export interface RootResult {
   error?: string
 }
 
+export interface SampleResult {
+  ok: boolean
+  samples?: ProcessGpuSample[]
+  error?: string
+}
+
 /**
  * Run a command, optionally feeding a password to `sudo -S` on stdin.
  *
@@ -142,7 +148,24 @@ export class RootSampler {
    * The output file is removed first so a stale sample cannot be mistaken for
    * a fresh one if powermetrics fails to write.
    */
-  async sample(): Promise<{ ok: boolean; samples?: ProcessGpuSample[]; error?: string }> {
+  private inFlight: Promise<SampleResult> | undefined
+
+  async sample(): Promise<SampleResult> {
+    /*
+     * One at a time. The output path is fixed — it has to be, because the
+     * sudoers rule names it exactly and a wildcard would widen the grant — so
+     * two concurrent samples delete and rewrite the same file underneath each
+     * other. That produced a truncated file and an empty result whenever the
+     * 20-second timer overlapped a manual sample.
+     */
+    if (this.inFlight) return this.inFlight
+    this.inFlight = this.sampleNow().finally(() => {
+      this.inFlight = undefined
+    })
+    return this.inFlight
+  }
+
+  private async sampleNow(): Promise<SampleResult> {
     const out = samplePath(this.home)
     try {
       fs.mkdirSync(path.dirname(out), { recursive: true })
@@ -156,7 +179,15 @@ export class RootSampler {
       return { ok: false, error: scrubForLog(res.stderr).trim() || 'powermetrics failed.' }
     }
     try {
-      return { ok: true, samples: parseProcessGpu(fs.readFileSync(out, 'utf8')) }
+      const text = fs.readFileSync(out, 'utf8')
+      const samples = parseProcessGpu(text)
+      // powermetrics writes a preamble before the task table. A file with the
+      // preamble and nothing else means the run was cut short — reporting that
+      // as "no process used the GPU" would be a lie.
+      if (!samples.length && !/GPU\s*ms\/s/i.test(text)) {
+        return { ok: false, error: 'powermetrics produced no task table; try sampling again.' }
+      }
+      return { ok: true, samples }
     } catch (err) {
       return { ok: false, error: `Could not read the sample: ${String(err)}` }
     }

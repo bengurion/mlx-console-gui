@@ -1,3 +1,4 @@
+import { parseProcessGpu } from '../src/services/powermetrics.ts'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
@@ -194,4 +195,46 @@ test('GPU address space is parsed as-is, even when it exceeds installed memory',
   assert.equal(gpu.allocatedBytes, 195149987840)
   assert.equal(gpu.inUseBytes, 112208871424)
   assert.ok(gpu.allocatedBytes! > 137438953472, 'larger than 128 GB of RAM, and that is expected')
+})
+
+// ---- per-process GPU attribution ------------------------------------------
+
+test('the powermetrics task table is read by row shape, not header columns', () => {
+  // Captured verbatim from `powermetrics --samplers tasks --show-process-gpu`
+  // on macOS 26. Note the header has 7 cells but the rows have 9 columns:
+  // Deadlines and Wakeups each span two. Indexing off the header silently
+  // matched nothing, which read as "no process used the GPU".
+  const output = [
+    'Machine model: Mac17,6',
+    'OS version: 25F84',
+    '',
+    '*** Running tasks ***',
+    '',
+    'Name                               ID     CPU ms/s  User%  Deadlines (<2 ms, 2-5 ms)  Wakeups (Intr, Pkg idle)  GPU ms/s',
+    'WindowServer                       411    106.50    60.90  32.66   0.00               292.97  2.97              14.25    ',
+    'DEAD_TASKS                         -1     40.93     28.07  0.00    0.00               0.00    0.00              0.00     ',
+    'Code Helper (Renderer)             10186  84.83     93.17  0.99    1.98               44.54   0.00              0.00     ',
+    'mlx_lm.server                      4821   950.10    99.10  0.00    0.00               10.00   0.00              812.40   ',
+    '',
+  ].join('\n')
+
+  const samples = parseProcessGpu(output)
+  assert.equal(samples.length, 4, 'every row, including DEAD_TASKS')
+
+  const server = samples.find((s) => s.name === 'mlx_lm.server')
+  assert.deepEqual(server, { name: 'mlx_lm.server', pid: 4821, gpuMsPerS: 812.4 })
+
+  // A name containing spaces and brackets must survive intact.
+  const helper = samples.find((s) => s.pid === 10186)
+  assert.equal(helper?.name, 'Code Helper (Renderer)')
+
+  assert.equal(samples.find((s) => s.pid === 411)?.gpuMsPerS, 14.25)
+  assert.equal(samples.find((s) => s.pid === -1)?.name, 'DEAD_TASKS', 'a negative id is still an id')
+})
+
+test('preamble and footers are not mistaken for processes', () => {
+  const samples = parseProcessGpu(
+    ['Machine model: Mac17,6', 'Boot time: Sun Jul 19 16:09:10 2026', 'no table here'].join('\n'),
+  )
+  assert.deepEqual(samples, [], 'no header means no rows')
 })

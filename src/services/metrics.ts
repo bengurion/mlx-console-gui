@@ -179,6 +179,8 @@ export function parseWiredLimit(sysctlOutput: string): number | undefined {
 }
 
 export interface CpuSample {
+  /** Per-core totals, so a single busy core is not averaged into invisibility. */
+  cores?: CpuSample[]
   idle: number
   total: number
 }
@@ -236,13 +238,35 @@ export function parseIoregGpu(output: string): GpuStats {
 export function cpuSample(cpus: Array<{ times: Record<string, number> }>): CpuSample {
   let idle = 0
   let total = 0
+  const cores: CpuSample[] = []
   for (const cpu of cpus) {
+    let coreIdle = 0
+    let coreTotal = 0
     for (const [mode, ms] of Object.entries(cpu.times)) {
-      total += ms
-      if (mode === 'idle') idle += ms
+      coreTotal += ms
+      if (mode === 'idle') coreIdle += ms
     }
+    cores.push({ idle: coreIdle, total: coreTotal })
+    idle += coreIdle
+    total += coreTotal
   }
-  return { idle, total }
+  return { idle, total, cores }
+}
+
+/**
+ * Utilisation of each core between two samples.
+ *
+ * Worth having separately from the average on Apple Silicon: performance and
+ * efficiency cores behave differently under the same load, and a decode loop
+ * pinning two cores while sixteen idle reads as ~11% overall — which looks
+ * like nothing is happening.
+ */
+export function perCorePercent(
+  prev: CpuSample | undefined,
+  next: CpuSample,
+): number[] | undefined {
+  if (!prev?.cores || !next.cores || prev.cores.length !== next.cores.length) return undefined
+  return next.cores.map((core, i) => cpuPercent(prev.cores![i], core) ?? 0)
 }
 
 /**

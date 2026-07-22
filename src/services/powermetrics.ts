@@ -12,8 +12,9 @@
  * root. Only the utilization row gains attribution.
  *
  * The tasks sampler prints a header row followed by one row per process. The
- * exact column set varies with the flags and OS version, so the parser locates
- * the GPU column by header text rather than by a fixed offset.
+ * header cannot be used to index the columns — two headings each span two
+ * numeric fields — so rows are read by shape: name, pid, then numbers, GPU
+ * last.
  */
 
 export interface ProcessGpuSample {
@@ -26,70 +27,34 @@ export interface ProcessGpuSample {
 /** Header cell that marks the per-process GPU column. */
 const GPU_HEADER = /GPU\s*ms\/s/i
 
-/**
- * Header cells, with `<X> ms/s` collapsed so a unit's space does not split it
- * into two columns (`CPU ms/s` and `GPU ms/s` both contain one).
- */
-function headerCells(line: string): string[] {
-  return line
-    .replace(/(\w+)\s*ms\/s/gi, '$1MS')
-    .trim()
-    .split(/\s+/)
-}
-
-/**
- * Column layout expressed as offsets from the END of the row.
- *
- * Indexing from the left is wrong: a process name may contain spaces
- * ("Code Helper (Renderer)") and would consume extra cells, shifting every
- * column after it. The numeric columns are always the last N, so counting
- * back from the right is stable regardless of the name.
- */
-interface Layout {
-  gpuFromEnd: number
-  pidFromEnd: number
-}
-
-function layoutOf(line: string): Layout | undefined {
-  if (!GPU_HEADER.test(line)) return undefined
-  const cells = headerCells(line)
-  const gpuIdx = cells.findIndex((c) => /^GPUMS$/i.test(c))
-  if (gpuIdx < 0) return undefined
-  const pidIdx = cells.findIndex((c) => /^(id|pid)$/i.test(c))
-  return {
-    gpuFromEnd: cells.length - gpuIdx,
-    pidFromEnd: cells.length - (pidIdx >= 0 ? pidIdx : 1),
-  }
-}
-
-/**
- * Parse the per-process GPU table.
- *
- * Rows whose GPU cell is not numeric are skipped rather than treated as zero,
- * so a layout change degrades to "no data" instead of silently reporting 0.
- */
 export function parseProcessGpu(output: string): ProcessGpuSample[] {
-  let layout: Layout | undefined
+  let inTable = false
   const out: ProcessGpuSample[] = []
 
   for (const line of output.split(/\r?\n/)) {
-    const found = layoutOf(line)
-    if (found) {
-      layout = found
+    if (GPU_HEADER.test(line)) {
+      inTable = true
       continue
     }
-    if (!layout || !line.trim()) continue
+    if (!inTable || !line.trim()) continue
 
     const cells = line.trim().split(/\s+/)
-    if (cells.length < layout.pidFromEnd) continue
+    if (cells.length < 3) continue
 
-    const pid = Number(cells[cells.length - layout.pidFromEnd])
-    const gpu = Number(cells[cells.length - layout.gpuFromEnd])
-    if (!Number.isFinite(pid) || !Number.isFinite(gpu)) continue
+    // The pid is the first whole number; everything before it is the name.
+    const pidIdx = cells.findIndex((c, i) => i > 0 && /^-?\d+$/.test(c))
+    if (pidIdx < 1) continue
 
-    // Everything before the pid is the name, spaces included.
-    const name = cells.slice(0, cells.length - layout.pidFromEnd).join(' ')
-    out.push({ name, pid, gpuMsPerS: gpu })
+    const rest = cells.slice(pidIdx + 1)
+    // Every remaining field is numeric in a real row; anything else is a
+    // footer or a section break, not data.
+    if (!rest.length || !rest.every((c) => /^-?\d+(\.\d+)?$/.test(c))) continue
+
+    const gpu = Number(rest[rest.length - 1])
+    const pid = Number(cells[pidIdx])
+    if (!Number.isFinite(gpu) || !Number.isFinite(pid)) continue
+
+    out.push({ name: cells.slice(0, pidIdx).join(' '), pid, gpuMsPerS: gpu })
   }
   return out
 }

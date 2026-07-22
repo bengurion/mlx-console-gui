@@ -94,7 +94,7 @@ export interface ServerStatusLite {
 /** One poll of system metrics. Every field is best-effort. */
 export interface MetricsSnapshot {
   at: number
-  cpu: { percent?: number; cores: number; load1: number }
+  cpu: { percent?: number; cores: number; load1: number; perCore?: number[] }
   memory?: {
     totalBytes: number
     wiredBytes: number

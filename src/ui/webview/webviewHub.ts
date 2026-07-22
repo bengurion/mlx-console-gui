@@ -2,6 +2,7 @@ import * as os from 'node:os'
 import { log } from '../../core/logging'
 import { settings } from '../../core/settings'
 import { RootSampler } from '../../services/rootSampler'
+import { manualCommand } from '../../services/rootAccess'
 
 /** How often the privileged sampler runs once authorised. */
 const PROCESS_GPU_INTERVAL_MS = 20_000
@@ -611,10 +612,25 @@ export class WebviewHub {
         return this.deps.metrics.sampleOnce()
       case 'suggestDraftModel':
         return this.suggestDraftModel()
-      case 'samplePerProcessGpu':
-        return this.deps.metrics.samplePerProcessGpu()
+      case 'samplePerProcessGpu': {
+        /*
+         * One path, not two. This used to run the metrics service's own
+         * elevation attempt, which in a browser could only ever come back
+         * "needs auth" — so the button and the 20-second poll disagreed about
+         * whether sampling was possible. Both now go through the sampler that
+         * the one-time authorisation actually enables.
+         */
+        if (!(await this.rootSampler.isEnabled())) return { ok: false, needsAuth: true }
+        const res = await this.rootSampler.sample()
+        // A manual sample is also a good moment to start the timer, if the
+        // grant was installed outside this session.
+        if (res.ok) this.startProcessGpuPolling()
+        return res
+      }
       case 'rootGpuStatus':
-        return { enabled: await this.rootSampler.isEnabled() }
+        // The command travels with the status so the copy-and-run fallback is
+        // the exact command the grant covers, not an approximation of it.
+        return { enabled: await this.rootSampler.isEnabled(), command: manualCommand() }
       case 'enableRootGpu': {
         // Used here and nowhere else: not stored, not logged, not echoed back.
         const secret = String((params as { secret?: unknown })?.secret ?? '')
