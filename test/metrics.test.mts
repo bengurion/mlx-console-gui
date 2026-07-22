@@ -1,4 +1,4 @@
-import { parseProcessGpu } from '../src/services/powermetrics.ts'
+import { parseGpuPower, parseProcessGpu } from '../src/services/powermetrics.ts'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
@@ -237,4 +237,26 @@ test('preamble and footers are not mistaken for processes', () => {
     ['Machine model: Mac17,6', 'Boot time: Sun Jul 19 16:09:10 2026', 'no table here'].join('\n'),
   )
   assert.deepEqual(samples, [], 'no header means no rows')
+})
+
+test('the gpu_power block is parsed, and its absence is not an error', () => {
+  // Captured from `sudo powermetrics --samplers gpu_power` on this machine.
+  const output = [
+    '**** GPU usage ****',
+    '',
+    'GPU HW active frequency: 338 MHz',
+    'GPU HW active residency:   2.56% (338 MHz: 2.6% 486 MHz:   0%)',
+    'GPU SW requested state: (P1 : 100% P2 :   0%)',
+    'GPU idle residency:  97.44%',
+    'GPU Power: 23 mW',
+  ].join('\n')
+
+  const power = parseGpuPower(output)
+  assert.equal(power?.milliwatts, 23)
+  assert.equal(power?.frequencyMhz, 338)
+  assert.equal(power?.idleResidencyPercent, 97.44)
+  assert.equal(power?.activeResidencyPercent, 2.56, 'the first percentage, not one from the histogram')
+
+  // The tasks sampler alone produces no such block; that is normal, not a failure.
+  assert.equal(parseGpuPower('Name  ID  CPU ms/s  GPU ms/s\nWindowServer 411 1.0 0.0'), undefined)
 })

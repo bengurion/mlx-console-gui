@@ -44,8 +44,11 @@ export function samplePath(home = os.homedir()): string {
 export function sampleCommand(home = os.homedir(), intervalMs = 1000): string[] {
   return [
     POWERMETRICS_BIN,
+    // Both samplers in one run: `tasks` gives the per-process table and
+    // `gpu_power` gives device power and clocks. Two separate commands would
+    // mean two grants and two sudo invocations for one refresh.
     '--samplers',
-    'tasks',
+    'tasks,gpu_power',
     '--show-process-gpu',
     '-n',
     '1',
@@ -87,9 +90,24 @@ export function isSafeUserName(user: string): boolean {
   return /^[a-z_][a-z0-9_.-]*$/i.test(user) && user.length <= 32
 }
 
-/** True when `sudo -n -l <bin>` reports the command is allowed without a password. */
-export function grantsPasswordless(exitCode: number | null): boolean {
-  return exitCode === 0
+/**
+ * Does `sudo -l` show a passwordless grant for exactly this command?
+ *
+ * Asking `sudo -l <command>` is not enough, and getting this wrong is subtle:
+ * an admin account usually has `(ALL) ALL`, so sudo answers "yes, allowed" for
+ * any command at all — it just wants a password. That made a missing or
+ * outdated rule look installed, and every sample then failed with a password
+ * prompt nobody could answer.
+ *
+ * The listing is explicit about which entries are passwordless, so the check is
+ * for a NOPASSWD line naming our command.
+ */
+export function grantsPasswordless(sudoListOutput: string, command: string[]): boolean {
+  const wanted = command.join(' ')
+  return sudoListOutput
+    .split('\n')
+    .filter((line) => /NOPASSWD:/i.test(line))
+    .some((line) => line.includes(wanted))
 }
 
 /**

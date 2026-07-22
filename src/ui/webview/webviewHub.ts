@@ -346,7 +346,13 @@ export class WebviewHub {
       this.broadcast({
         type: 'push',
         name: 'processGpu',
-        data: { at: Date.now(), enabled: res.ok, samples: res.samples, error: res.error },
+        data: {
+          at: Date.now(),
+          enabled: res.ok,
+          samples: res.samples,
+          power: res.power,
+          error: res.error,
+        },
       })
       // A revoked grant should stop the timer rather than fail every 20s.
       if (!res.ok && !(await this.rootSampler.isEnabled())) this.stopProcessGpuPolling()

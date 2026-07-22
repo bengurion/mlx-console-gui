@@ -286,6 +286,7 @@ function PerProcessGpu({ serverPid }: { serverPid?: number }) {
   const [secret, setSecret] = useState('')
   const [updatedAt, setUpdatedAt] = useState<number>()
   const [command, setCommand] = useState<string>()
+  const [power, setPower] = useState<ProcessGpuPush['power']>()
 
   // Once authorised the host samples on a timer and pushes the result, so this
   // stays live without the view asking for anything.
@@ -294,6 +295,7 @@ function PerProcessGpu({ serverPid }: { serverPid?: number }) {
       onPush<ProcessGpuPush>('processGpu', (p) => {
         setEnabled(p.enabled)
         if (p.samples) setSamples(p.samples)
+        if (p.power) setPower(p.power)
         setUpdatedAt(p.at)
         setError(p.error)
       }),
@@ -436,10 +438,23 @@ function PerProcessGpu({ serverPid }: { serverPid?: number }) {
         <div className="small muted">No process reported GPU time in that sample.</div>
       )}
 
+      {/* Device power from the same privileged run: the figure that says what
+          the GPU is costing, rather than how busy it looks. */}
+      {power && (
+        <div className="small" style={{ marginTop: 4 }}>
+          {power.milliwatts !== undefined && <>GPU draw {(power.milliwatts / 1000).toFixed(2)} W</>}
+          {power.frequencyMhz !== undefined && <> · {power.frequencyMhz} MHz</>}
+          {power.idleResidencyPercent !== undefined && (
+            <> · idle {power.idleResidencyPercent.toFixed(1)}%</>
+          )}
+        </div>
+      )}
+
       {samples !== undefined && (
         <div className="small muted" style={{ marginTop: 4 }}>
-          GPU <em>time</em> only — macOS has no per-process GPU memory accounting at any
-          privilege level, so the memory figures above stay device-wide.
+          Attribution is GPU <em>time</em>; the memory figures stay device-wide because macOS
+          keeps no per-process GPU memory accounting at any privilege level. Not a limitation
+          of this sampler — there is no API that reports it.
         </div>
       )}
 

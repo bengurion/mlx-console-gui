@@ -11,12 +11,12 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { spawn } from 'node:child_process'
 import { log } from '../core/logging'
-import { parseProcessGpu, type ProcessGpuSample } from './powermetrics'
+import { parseGpuPower, parseProcessGpu, type GpuPowerSample, type ProcessGpuSample } from './powermetrics'
 import {
   INSTALL_BIN,
-  POWERMETRICS_BIN,
   SUDOERS_PATH,
   VISUDO_BIN,
+  grantsPasswordless,
   isSafeUserName,
   sampleCommand,
   samplePath,
@@ -31,7 +31,11 @@ export interface RootResult {
 
 export interface SampleResult {
   ok: boolean
+  /** The grant is missing or out of date; the UI should offer to authorise. */
+  needsAuth?: boolean
   samples?: ProcessGpuSample[]
+  /** Device-wide power and clocks, from the same run. */
+  power?: GpuPowerSample
   error?: string
 }
 
@@ -67,10 +71,18 @@ export class RootSampler {
     this.home = home
   }
 
-  /** Is the grant already in place? Cheap enough to call on every page load. */
+  /**
+   * Is the grant in place for the command we actually run?
+   *
+   * Checked against the full argument list, not just the binary. A rule
+   * installed by an older version authorises a different command, and sudo
+   * would refuse ours — so a bare binary check would report "enabled" and then
+   * fail on every sample, which is worse than reporting it needs authorising.
+   */
   async isEnabled(): Promise<boolean> {
-    const { code } = await run('sudo', ['-n', '-l', POWERMETRICS_BIN])
-    return code === 0
+    const { code, stdout } = await run('sudo', ['-n', '-l'])
+    if (code !== 0) return false
+    return grantsPasswordless(stdout, sampleCommand(this.home))
   }
 
   /**
@@ -176,18 +188,25 @@ export class RootSampler {
 
     const res = await run('sudo', ['-n', ...sampleCommand(this.home)])
     if (res.code !== 0) {
+      // Distinguish "not authorised" from "the sampler failed": only the first
+      // is fixable by the user, and the scrubber would otherwise reduce sudo's
+      // own wording to something unreadable.
+      if (/password is required|a terminal is required/i.test(res.stderr)) {
+        return { ok: false, needsAuth: true, error: 'Sampling is not authorised on this machine.' }
+      }
       return { ok: false, error: scrubForLog(res.stderr).trim() || 'powermetrics failed.' }
     }
     try {
       const text = fs.readFileSync(out, 'utf8')
       const samples = parseProcessGpu(text)
+      const power = parseGpuPower(text)
       // powermetrics writes a preamble before the task table. A file with the
       // preamble and nothing else means the run was cut short — reporting that
       // as "no process used the GPU" would be a lie.
       if (!samples.length && !/GPU\s*ms\/s/i.test(text)) {
         return { ok: false, error: 'powermetrics produced no task table; try sampling again.' }
       }
-      return { ok: true, samples }
+      return { ok: true, samples, power }
     } catch (err) {
       return { ok: false, error: `Could not read the sample: ${String(err)}` }
     }

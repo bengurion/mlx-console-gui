@@ -10,6 +10,7 @@ import assert from 'node:assert/strict'
 import {
   POWERMETRICS_BIN,
   SUDOERS_PATH,
+  grantsPasswordless,
   isSafeUserName,
   manualCommand,
   sampleCommand,
@@ -73,4 +74,39 @@ test('anything credential-shaped is scrubbed before it can reach a log', () => {
   // rewritten by it — the reason these run in this order with these strings.
   assert.equal(scrubForLog('[sudo] password for ben:').includes('[redacted]'), false)
   assert.equal(scrubForLog('visudo: ok'), 'visudo: ok', 'ordinary output stays readable')
+})
+
+test('an admin\'s blanket (ALL) ALL is not mistaken for a grant', () => {
+  const command = sampleCommand('/Users/ben')
+
+  // Real `sudo -l` output on an admin account with no rule installed. Asking
+  // "may I run this?" answers yes here — it just wants a password — which is
+  // why the check has to be for NOPASSWD specifically.
+  const noRule = [
+    'User ben may run the following commands on bens-macbook-pro:',
+    '    (ALL) ALL',
+  ].join('\n')
+  assert.equal(grantsPasswordless(noRule, command), false)
+
+  const withRule = [
+    'User ben may run the following commands on bens-macbook-pro:',
+    '    (ALL) ALL',
+    `    (root) NOPASSWD: ${command.join(' ')}`,
+  ].join('\n')
+  assert.equal(grantsPasswordless(withRule, command), true)
+})
+
+test('a grant for a different command does not count', () => {
+  // What an older version installed: same binary, different samplers. sudo
+  // would refuse the command we now run, so reporting "enabled" would mean
+  // failing on every sample instead of offering to re-authorise.
+  const stale =
+    '    (root) NOPASSWD: /usr/bin/powermetrics --samplers tasks --show-process-gpu -n 1 -i 1000 -o /Users/ben/.mlx-console/powermetrics.txt'
+  assert.equal(grantsPasswordless(stale, sampleCommand('/Users/ben')), false)
+
+  // And a NOPASSWD line for something else entirely.
+  assert.equal(
+    grantsPasswordless('    (root) NOPASSWD: /bin/rm -rf /tmp/x', sampleCommand('/Users/ben')),
+    false,
+  )
 })

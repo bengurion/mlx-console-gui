@@ -17,6 +17,43 @@
  * last.
  */
 
+/**
+ * Device-wide GPU state from the `gpu_power` sampler.
+ *
+ * Power draw is the one figure that says what the GPU is costing rather than
+ * how busy it looks: an idle-but-resident model draws almost nothing, while a
+ * decode loop is measurable in watts.
+ */
+export interface GpuPowerSample {
+  /** Instantaneous GPU power draw. */
+  milliwatts?: number
+  /** Clock the GPU is running at when active. */
+  frequencyMhz?: number
+  /** Share of the sample the GPU spent doing nothing. */
+  idleResidencyPercent?: number
+  activeResidencyPercent?: number
+}
+
+/**
+ * Parse the `**** GPU usage ****` block.
+ *
+ * Every field is optional: the section is only present when the gpu_power
+ * sampler was requested, and its contents vary by chip generation.
+ */
+export function parseGpuPower(output: string): GpuPowerSample | undefined {
+  const num = (re: RegExp): number | undefined => {
+    const m = output.match(re)
+    return m ? Number(m[1]) : undefined
+  }
+  const sample: GpuPowerSample = {
+    milliwatts: num(/GPU Power:\s*([\d.]+)\s*mW/i),
+    frequencyMhz: num(/GPU HW active frequency:\s*([\d.]+)\s*MHz/i),
+    idleResidencyPercent: num(/GPU idle residency:\s*([\d.]+)%/i),
+    activeResidencyPercent: num(/GPU HW active residency:\s*([\d.]+)%/i),
+  }
+  return Object.values(sample).some((v) => v !== undefined) ? sample : undefined
+}
+
 export interface ProcessGpuSample {
   name: string
   pid: number

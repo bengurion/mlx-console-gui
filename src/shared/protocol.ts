@@ -180,6 +180,13 @@ export interface ProcessGpuPush {
   at: number
   enabled: boolean
   samples?: { name: string; pid: number; gpuMsPerS: number }[]
+  /** Device power and clocks, sampled in the same privileged run. */
+  power?: {
+    milliwatts?: number
+    frequencyMhz?: number
+    idleResidencyPercent?: number
+    activeResidencyPercent?: number
+  }
   error?: string
 }
 
