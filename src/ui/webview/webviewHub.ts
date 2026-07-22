@@ -27,6 +27,7 @@ import type {
   HostBound,
   LocalModel,
   MachineProfile,
+  ModelConfigView,
   ModelProfile,
   RpcMethod,
   SearchQuery,
@@ -273,6 +274,62 @@ export class WebviewHub {
     }
   }
 
+  /**
+   * The three layers of generation config for one model, unmerged.
+   *
+   * Kept separate on purpose: seeing that temperature came from the model's own
+   * `generation_config.json` rather than from you is the difference between
+   * trusting the number and wondering about it.
+   */
+  private modelConfigView(repo: string): ModelConfigView {
+    const fromModel = this.modelConfig.generationDefaults(repo) as Record<string, number>
+    const overrides = settings().get<Record<string, Record<string, number>>>('modelOverrides', {})
+    const global = Config.sampling() as unknown as Record<string, number>
+
+    return {
+      modelId: repo,
+      override: overrides?.[repo] ?? {},
+      fromModel,
+      global,
+      effective: Config.samplingFor(repo, fromModel) as unknown as Record<string, number>,
+      contextWindow: this.modelConfig.contextLength(repo),
+      kvBytesPerToken: this.modelConfig.kvBytesPerToken(repo),
+      weightBytes: this.modelConfig.weightBytes(repo),
+      vocabSize: this.modelConfig.vocabSize(repo),
+    }
+  }
+
+  /**
+   * Write one model's overrides.
+   *
+   * A key set to undefined is removed rather than stored as null, so "unset"
+   * genuinely falls back to the model's own recommendation instead of pinning
+   * a value the user never chose.
+   */
+  private async setModelConfig(
+    repo: string,
+    patch: Record<string, unknown>,
+  ): Promise<{ ok: boolean; config?: ModelConfigView; error?: string }> {
+    try {
+      const all = {
+        ...settings().get<Record<string, Record<string, unknown>>>('modelOverrides', {}),
+      }
+      const next = { ...(all[repo] ?? {}) }
+      for (const [key, value] of Object.entries(patch)) {
+        if (value === undefined || value === null || value === '') delete next[key]
+        else next[key] = Number(value)
+      }
+      if (Object.keys(next).length) all[repo] = next
+      else delete all[repo]
+
+      await settings().update('modelOverrides', all)
+      log.info(`Model config updated for ${repo}`)
+      return { ok: true, config: this.modelConfigView(repo) }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
   /** Read a model's own files and broadcast the result. */
   /**
    * Poll per-process GPU while the grant is in place.
@@ -514,6 +571,12 @@ export class WebviewHub {
         await settings().update('defaultModel', repoOf())
         this.pushServerStatus()
         return { ok: true }
+      case 'getModelConfig':
+        return this.modelConfigView(repoOf())
+      case 'setModelConfig': {
+        const { repo, patch } = params as { repo: string; patch: Record<string, unknown> }
+        return this.setModelConfig(repo, patch)
+      }
       case 'startServer':
         return { ok: await this.deps.server.ensureRunning(true) }
       case 'stopServer':

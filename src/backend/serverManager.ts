@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process'
+import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { Emitter, disposeAll, type Disposable } from '../core/events'
@@ -17,6 +17,24 @@ import {
 } from './serverRegistry'
 
 export type ServerState = 'stopped' | 'starting' | 'ready' | 'error'
+
+/**
+ * The pid listening on a port, if any.
+ *
+ * `lsof` rather than a connect probe: a connect only says "something is
+ * there", and what the caller needs is which process, so it can be reported
+ * or stopped. Returns undefined when the port is free — or when lsof is
+ * unavailable, in which case the caller carries on and lets the spawn decide.
+ */
+async function whoHasPort(port: number): Promise<number | undefined> {
+  return new Promise((resolve) => {
+    execFile('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'], (err, stdout) => {
+      if (err) return resolve(undefined)
+      const pid = Number(stdout.trim().split('\n')[0])
+      resolve(Number.isFinite(pid) && pid > 0 ? pid : undefined)
+    })
+  })
+}
 
 /**
  * Residency of weights inside the server process.
@@ -261,11 +279,32 @@ export class ServerManager {
     return this._state === 'ready' || this._state === 'starting'
   }
 
+  /**
+   * Run lifecycle operations one at a time.
+   *
+   * Start, stop and restart all move the same process, and a UI where two
+   * clients (or two impatient clicks) can interleave them produced exactly the
+   * damage you would expect: several servers spawned at once, all but one
+   * failing on the port, and orphans left holding it. Serialising them is the
+   * whole fix — each waits its turn and then sees the real state.
+   */
+  private queue: Promise<unknown> = Promise.resolve()
+
+  private serialize<T>(task: () => Promise<T>): Promise<T> {
+    const run = this.queue.then(task, task)
+    // Keep the chain alive regardless of outcome; the caller sees the failure.
+    this.queue = run.then(
+      () => undefined,
+      () => undefined,
+    )
+    return run
+  }
+
   /** Ensure the environment is ready and the server is up; returns true when reachable. */
   async ensureRunning(interactive = false): Promise<boolean> {
     if (this._state === 'ready') return true
     if (this.startPromise) return this.startPromise
-    this.startPromise = this.start(interactive).finally(() => {
+    this.startPromise = this.serialize(() => this.start(interactive)).finally(() => {
       this.startPromise = undefined
     })
     return this.startPromise
@@ -282,6 +321,25 @@ export class ServerManager {
     if (await this.client.ping()) {
       this.setState('ready', 'Connected to existing server')
       return true
+    }
+
+    /*
+     * Something can hold the port without answering: `mlx_lm.server` serves on
+     * a single thread, so it goes silent while loading weights or generating,
+     * and a wedged or orphaned one never answers again. Spawning into that
+     * gets `EADDRINUSE`, which used to surface as "did not become ready in
+     * time" — true, useless, and it left another orphan behind. Check first,
+     * and name the process holding it.
+     */
+    const port = Config.serverPort()
+    const holder = await whoHasPort(port)
+    if (holder !== undefined) {
+      const detail =
+        `Port ${port} is held by pid ${holder}, which is not answering. ` +
+        'It may still be loading, or it may be stale — stop it before starting a new one.'
+      log.warn(detail)
+      this.setState('error', detail)
+      return false
     }
 
     this.setState('starting')
@@ -376,6 +434,10 @@ export class ServerManager {
    * So: resolve a pid from either source, ask politely, then insist.
    */
   async stop(): Promise<void> {
+    return this.serialize(() => this.stopNow())
+  }
+
+  private async stopNow(): Promise<void> {
     const pid = this.proc?.pid ?? this._externalPid
     if (pid !== undefined) {
       log.info(`Stopping mlx_lm.server (pid ${pid})`)
@@ -426,10 +488,20 @@ export class ServerManager {
     }
   }
 
+  /**
+   * Stop and start as one unit.
+   *
+   * Not `stop()` then `ensureRunning()`: those are two turns of the queue, and
+   * another caller's start could land between them — which is how a restart
+   * used to end up racing itself for the port.
+   */
   async restart(): Promise<boolean> {
-    await this.stop()
-    await delay(300)
-    return this.ensureRunning(false)
+    return this.serialize(async () => {
+      await this.stopNow()
+      // The socket needs a moment to be released before rebinding it.
+      await delay(300)
+      return this.start(false)
+    })
   }
 
   dispose() {

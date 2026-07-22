@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { rpc, openSettings } from '../api'
+import { saveSetting, useSettings } from '../settings'
 import type { SettingSpec } from '../../../src/shared/protocol'
 
 /** Friendly headings for the group derived from each key's first segment. */
@@ -36,12 +36,12 @@ function toText(value: unknown, spec: Pick<SettingSpec, 'type' | 'unit'>): strin
  * One control, chosen by declared type. Edits commit on blur (or immediately
  * for checkboxes) so a half-typed number is never written.
  */
-function Field({
+export function Field({
   spec,
   onSaved,
 }: {
   spec: SettingSpec
-  onSaved: (settings: SettingSpec[]) => void
+  onSaved?: () => void
 }) {
   const [draft, setDraft] = useState(() => toText(spec.value, spec))
   const [error, setError] = useState<string>()
@@ -52,10 +52,8 @@ function Field({
 
   async function commit(value: unknown) {
     setError(undefined)
-    const res = (await rpc('updateSetting', { key: spec.key, value }).catch((e: unknown) => ({
-      ok: false,
-      error: String(e),
-    }))) as { ok: boolean; error?: string; settings?: SettingSpec[] }
+    // Through the shared store, so every other editor of this setting updates.
+    const res = await saveSetting(spec.key, value)
 
     if (!res.ok) {
       setError(res.error ?? 'Could not save.')
@@ -63,7 +61,7 @@ function Field({
     }
     setSaved(true)
     setTimeout(() => setSaved(false), 1200)
-    if (res.settings) onSaved(res.settings)
+    onSaved?.()
   }
 
   const isDefault = JSON.stringify(spec.value) === JSON.stringify(spec.default)
@@ -162,14 +160,10 @@ function Field({
  * setting shows up here automatically — there is no second list to maintain.
  */
 export function SettingsPage() {
-  const [settings, setSettings] = useState<SettingSpec[]>([])
+  const settings = useSettings()
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   const [filter, setFilter] = useState('')
-
-  useEffect(() => {
-    void rpc<SettingSpec[]>('getSettings').then(setSettings).catch(() => undefined)
-  }, [])
 
   const needle = filter.trim().toLowerCase()
   const visible = needle
@@ -211,8 +205,8 @@ export function SettingsPage() {
         <a onClick={() => setOpen(!open)}>{open ? 'Hide' : `Edit (${settings.length})`}</a>
       </div>
       <div className="small muted">
-        {settings.length} settings{modified > 0 && `, ${modified} modified`}. Changes save to your
-        user settings immediately.
+        {settings.length} settings{modified > 0 && `, ${modified} modified`}. Saved as you edit —
+        there is nothing to apply.
       </div>
 
       {open && (
@@ -232,16 +226,12 @@ export function SettingsPage() {
               {visible
                 .filter((s) => s.group === g)
                 .map((s) => (
-                  <Field key={s.key} spec={s} onSaved={setSettings} />
+                  <Field key={s.key} spec={s} />
                 ))}
             </div>
           ))}
 
           {visible.length === 0 && <div className="small muted">No settings match “{filter}”.</div>}
-
-          <div className="row wrap small" style={{ marginTop: 6 }}>
-            <a onClick={() => openSettings('mlxConsole')}>Open in VS Code settings editor</a>
-          </div>
         </>
       )}
     </div>

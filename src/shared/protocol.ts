@@ -183,6 +183,30 @@ export interface ProcessGpuPush {
   error?: string
 }
 
+/**
+ * Per-model generation settings, as the Models view sees them.
+ *
+ * Three layers, reported separately rather than merged, because which one a
+ * value came from is the useful part: what the model recommends in its own
+ * `generation_config.json`, what you set globally, and what you set for this
+ * model specifically.
+ */
+export interface ModelConfigView {
+  modelId: string
+  /** Only the keys this model has an explicit override for. */
+  override: Record<string, number>
+  /** The model's own recommendation, where it ships one. */
+  fromModel: Record<string, number>
+  /** The global defaults, used when neither of the above applies. */
+  global: Record<string, number>
+  /** What a request will actually use, after all three are applied. */
+  effective: Record<string, number>
+  contextWindow?: number
+  kvBytesPerToken?: number
+  weightBytes?: number
+  vocabSize?: number
+}
+
 /** One editable setting, derived from the package.json contribution schema. */
 export interface SettingSpec {
   key: string
@@ -233,6 +257,8 @@ export type RpcMethod =
   | 'cancelDownload'
   | 'launchModel'
   | 'setDefaultModel'
+  | 'getModelConfig'
+  | 'setModelConfig'
   | 'getSettings'
   | 'updateSetting'
   | 'getMetrics'

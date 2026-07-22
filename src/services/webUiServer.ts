@@ -460,9 +460,20 @@ window.__MLX_VIEW__ = ${JSON.stringify(view)};
         if (msg && msg.type === 'openExternal') return void window.open(msg.url, '_blank', 'noopener');
         if (msg && msg.type === 'copy') return void navigator.clipboard.writeText(msg.text);
         if (msg && msg.type === 'openSettings') {
-          // No settings editor in a browser — reveal the setting in the panel
-          // that is already on screen instead of doing nothing.
-          window.dispatchEvent(new CustomEvent('mlx:open-settings', { detail: msg.query || '' }));
+          // No settings editor in a browser, and since the split the settings
+          // panel is on its own tab — so switch there first, then let it
+          // reveal the setting. Dispatching alone would reach nothing.
+          if (window.__MLX_SHOW__) {
+            window.__MLX_SHOW__('settings');
+            document.querySelectorAll('button[data-view]').forEach(function (o) {
+              o.classList.toggle('active', o.dataset.view === 'settings');
+            });
+            history.replaceState(null, '', '?view=settings');
+          }
+          // After the view has mounted, or the listener will not exist yet.
+          requestAnimationFrame(function () {
+            window.dispatchEvent(new CustomEvent('mlx:open-settings', { detail: msg.query || '' }));
+          });
           return;
         }
         send(msg);

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { rpc, onPush } from '../api'
 import { bytes, relativeDate } from '../format'
+import { ModelConfig } from './ModelConfig'
 import type { EnvStatusLite, LocalModel, ServerStatusLite } from '../../../src/shared/protocol'
 
 export function ModelsPage() {
@@ -8,6 +9,7 @@ export function ModelsPage() {
   const [server, setServer] = useState<ServerStatusLite>()
   const [env, setEnv] = useState<EnvStatusLite>()
   const [busy, setBusy] = useState<string>()
+  const [configuring, setConfiguring] = useState<string>()
   const [error, setError] = useState<string>()
 
   useEffect(() => onPush<LocalModel[]>('models', setModels), [])
@@ -117,7 +119,17 @@ export function ModelsPage() {
                 >
                   Delete
                 </button>
+                <button
+                  className="secondary"
+                  onClick={() => setConfiguring((c) => (c === m.repo ? undefined : m.repo))}
+                >
+                  {configuring === m.repo ? 'Hide settings' : 'Settings'}
+                </button>
               </div>
+
+              {/* Per-model generation settings live with the model, since that
+                  is what they belong to. */}
+              {configuring === m.repo && <ModelConfig repo={m.repo} />}
             </div>
           )
         })

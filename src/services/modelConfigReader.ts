@@ -1,8 +1,8 @@
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { log } from '../core/logging'
-import { Config } from '../config'
+import { log } from '../core/logging.ts'
+import { Config } from '../config.ts'
 import {
   cacheDirName,
   isLocalPath,
@@ -12,7 +12,7 @@ import {
   parseGenerationDefaults,
   parseVocabSize,
   type GenerationDefaults,
-} from './modelConfig'
+} from './modelConfig.ts'
 
 /**
  * Finds a model's `config.json` in the Hugging Face cache (or a converted

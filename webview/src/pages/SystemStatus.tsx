@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { rpc, onPush, openSettings } from '../api'
+import { rpc, onPush } from '../api'
+import { InlineSetting } from './InlineSetting'
 import type { EnvStatusLite, ServerStatusLite } from '../../../src/shared/protocol'
 
 /**
@@ -77,16 +78,14 @@ export function SystemStatus() {
         <div className="divider" />
 
         <strong className="small">Storage</strong>
-        <div className="row spread small">
-          <span className="muted">Models download dir</span>
-          <a onClick={() => openSettings('mlxConsole.modelsDir')}>Change</a>
-        </div>
-        <code className="small">{env?.modelsDir ?? '…'}</code>
-        <div className="row spread small">
-          <span className="muted">Python env (mlx-lm)</span>
-          <a onClick={() => openSettings('mlxConsole.venvPath')}>Change</a>
-        </div>
-        <code className="small">{env?.venvPath ?? '(run setup)'}</code>
+        {/* Editable here rather than a link elsewhere: the path in use is shown
+            above the field that sets it, so you can see what an empty value
+            resolves to. */}
+        <div className="small muted">In use: <code>{env?.modelsDir ?? '…'}</code></div>
+        <InlineSetting short="modelsDir" />
+        <div className="small muted">In use: <code>{env?.venvPath ?? '(run setup)'}</code></div>
+        <InlineSetting short="venvPath" />
+        <InlineSetting short="pythonPath" />
       </div>
     </>
   )

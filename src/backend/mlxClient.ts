@@ -4,6 +4,14 @@
  * function/tool calling, plus the /v1/models listing.
  */
 
+/**
+ * How long a liveness check waits before calling it dead.
+ *
+ * Generous enough for a loaded server under load to answer a trivial request,
+ * short enough that a wedged port does not stall the UI.
+ */
+const PING_TIMEOUT_MS = 3000
+
 export interface ToolCall {
   id: string
   type: 'function'
@@ -95,9 +103,21 @@ export class MlxClient {
   }
 
   /** Lightweight readiness probe. */
-  async ping(signal?: AbortSignal): Promise<boolean> {
+  /**
+   * Is a server answering?
+   *
+   * Bounded, and that matters more than it looks: `mlx_lm.server` serves on a
+   * single thread, so it accepts the connection and then says nothing while it
+   * loads weights — and a wedged or orphaned one never speaks again. Without a
+   * deadline this waits forever, and everything downstream (start, restart,
+   * "is it up?") waits with it, which reads as the app being broken rather
+   * than the port being occupied.
+   */
+  async ping(signal?: AbortSignal, timeoutMs = PING_TIMEOUT_MS): Promise<boolean> {
+    const deadline = AbortSignal.timeout(timeoutMs)
+    const stop = signal ? AbortSignal.any([signal, deadline]) : deadline
     try {
-      const res = await fetch(this.url('/models'), { headers: this.headers(), signal })
+      const res = await fetch(this.url('/models'), { headers: this.headers(), signal: stop })
       return res.ok
     } catch {
       return false

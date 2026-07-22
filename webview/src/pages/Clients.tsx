@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { rpc, onPush, copy, openSettings } from '../api'
+import { rpc, onPush, copy } from '../api'
+import { InlineSetting } from './InlineSetting'
 import type { ExternalClientsInfo, ServerStatusLite } from '../../../src/shared/protocol'
 
 /**
@@ -36,10 +37,9 @@ export function ClientsPage() {
           <code className="small">{ext.baseUrl}</code>
           <a onClick={() => copy(ext.baseUrl)}>Copy</a>
         </div>
-        <div className="small">
-          LAN exposure: <strong>{ext.exposeToLan ? 'on' : 'off'}</strong>{' '}
-          <a onClick={() => openSettings('mlxConsole.server.exposeToLan')}>Configure</a>
-        </div>
+        <InlineSetting short="server.exposeToLan" />
+        <InlineSetting short="server.port" />
+        <InlineSetting short="server.apiKey" />
         {ext.hasApiKey ? (
           <div className="small muted">
             An API key is configured; clients must send it as a bearer token.
