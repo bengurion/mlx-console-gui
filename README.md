@@ -22,6 +22,27 @@ Everything below was measured on a 128 GB M5 Max while building this. The extens
 these numbers live rather than assuming them — but they are worth knowing even if you never
 install it.
 
+### It all comes back to unified memory
+
+On a PC with a discrete GPU there are two separate pools. The model lives in VRAM; the OS,
+your editor and your browser live in system RAM. They do not compete. A model that is too
+large simply fails to load, and the machine carries on.
+
+Apple Silicon has **one pool**. CPU and GPU address the same physical memory, which is why
+a laptop can run a 60 GB model at all — no 60 GB consumer GPU exists. But it also means the
+model and macOS are drawing from the same budget, and the failure mode changes completely:
+
+> A model that is slightly too large does not fail to load. It loads, takes memory the
+> system needed, and everything else starts swapping.
+
+Worse, GPU memory is **wired** — non-evictable. macOS cannot page it out to make room, so
+under pressure it must compress and swap *everything else*: your editor, your browser, the
+window server. That is the beachball.
+
+So every number below matters more than it would on a discrete-GPU machine. "How much is
+left?" is not a tuning question here; it is the difference between a working laptop and one
+you have to hold the power button on.
+
 ### The ceiling is lower than the spec sheet
 
 A 128 GB Mac does not give you 128 GB of GPU memory. Metal publishes its own limits, and
