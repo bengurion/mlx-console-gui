@@ -13,7 +13,14 @@ import {
 import { resolveVenv, venvCandidates, settingsCandidates } from '../src/headless/hostPaths.ts'
 import { buildPlist, loadCommands, xmlEscape, LABEL } from '../src/headless/launchd.ts'
 import { parseArgs } from '../src/headless/args.ts'
-import { findHelper, lastJsonLine, pythonError } from '../src/headless/pythonBridge.ts'
+import {
+  bundleCandidates,
+  findBundle,
+  findHelper,
+  lastJsonLine,
+  pythonError,
+  selfPath,
+} from '../src/headless/pythonBridge.ts'
 import { migrateStorage, planMigration } from '../src/core/storageMigration.ts'
 
 // ---- server arguments ------------------------------------------------------
@@ -303,4 +310,41 @@ test('both the current and previous storage ids are searched', () => {
       dirs.indexOf(dirs.find((d) => d.includes('vscode'))!),
     'the current id is preferred',
   )
+})
+
+// ---- finding the files that ship beside the CLI ----------------------------
+
+test('the CLI resolves through the symlink npm install creates', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mlx-self-'))
+  const dist = path.join(root, 'pkg', 'dist')
+  fs.mkdirSync(path.join(dist, 'webview'), { recursive: true })
+  fs.writeFileSync(path.join(dist, 'cli.js'), '')
+  fs.writeFileSync(path.join(dist, 'webview', 'main.js'), '')
+  const bin = path.join(root, 'bin')
+  fs.mkdirSync(bin)
+  const link = path.join(bin, 'mlx-console')
+  fs.symlinkSync(path.join(dist, 'cli.js'), link)
+
+  // The bug: the symlink's own directory holds none of the files we ship.
+  assert.equal(findBundle(link, (p) => fs.existsSync(p)), undefined, 'unresolved path finds nothing')
+  assert.equal(
+    findBundle(selfPath(link), (p) => fs.existsSync(p)),
+    // realpath also resolves /var -> /private/var on macOS, so compare like
+    // with like rather than against the path we happened to construct.
+    fs.realpathSync(path.join(dist, 'webview', 'main.js')),
+    'resolving the symlink finds the panel bundle',
+  )
+  fs.rmSync(root, { recursive: true, force: true })
+})
+
+test('selfPath survives a path that does not exist', () => {
+  assert.equal(selfPath('/no/such/cli.js'), '/no/such/cli.js')
+})
+
+test('the bundle is looked for in both shipped layouts', () => {
+  assert.deepEqual(bundleCandidates('/x/dist/cli.js'), ['/x/dist/webview/main.js'])
+  assert.deepEqual(bundleCandidates('/x/bin/cli.js'), [
+    '/x/bin/webview/main.js',
+    '/x/dist/webview/main.js',
+  ])
 })

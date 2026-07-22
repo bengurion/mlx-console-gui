@@ -33,7 +33,7 @@ import { DownloadManager } from '../services/downloadManager'
 import { MetricsService } from '../services/metricsService'
 import { WebviewHub } from '../ui/webview/webviewHub'
 import { StoreSettings, headlessEnvHost, headlessHubHost, storageDir } from './headlessHost'
-import { PythonBridge, findHelper } from './pythonBridge'
+import { PythonBridge, findBundle, findHelper, selfPath } from './pythonBridge'
 import type { LocalModel } from '../shared/protocol'
 
 const run = promisify(execFile)
@@ -58,6 +58,7 @@ webUi.requireToken for a token as well. The URL is printed when it starts.
 
 const log = {
   info: (m: string, ...r: unknown[]) => console.log(m, ...r.map(fmt)),
+  warn: (m: string, ...r: unknown[]) => console.error(m, ...r.map(fmt)),
   error: (m: string, ...r: unknown[]) => console.error(m, ...r.map(fmt)),
 }
 const fmt = (v: unknown) => (v instanceof Error ? (v.stack ?? v.message) : v)
@@ -123,7 +124,7 @@ async function readDeviceInfo(venv?: string): Promise<Record<string, number> | u
  */
 function pythonBridge(server: HeadlessServer): PythonBridge | undefined {
   const venv = server.venv()
-  const helper = findHelper(process.argv[1] ?? '')
+  const helper = findHelper()
   if (!venv || !helper) return undefined
   return new PythonBridge({ venv, helper, env: server.processEnv() })
 }
@@ -265,21 +266,22 @@ async function serve(port?: number): Promise<void> {
 
   // The full panel UI when the helper script is beside us; the compact page
   // otherwise, since without it there is nothing behind half the buttons.
-  const helper = findHelper(process.argv[1] ?? '')
-  const bundle = path.join(path.dirname(process.argv[1] ?? ''), 'webview', 'main.js')
+  const helper = findHelper()
+  const bundle = findBundle()
   const app = buildApp(settings, helper)
-  const fullUi = app.hub && fs.existsSync(bundle)
+  const fullUi = Boolean(app.hub && bundle)
   if (!fullUi) {
-    log.info(
-      helper
-        ? 'Panel bundle not found beside the CLI — serving the compact dashboard.'
-        : 'Helper script not found beside the CLI — serving the compact dashboard.',
+    // Say exactly what was missing and where we looked: the usual cause is
+    // running a copy of cli.js away from the files that ship beside it.
+    log.warn(
+      `Serving the compact dashboard — ${helper ? 'panel bundle' : 'helper script'} not found ` +
+        `next to ${selfPath()}.`,
     )
   }
 
   const ui = new WebUiServer({
     app:
-      fullUi && app.hub
+      fullUi && app.hub && bundle
         ? {
             scriptPath: bundle,
             attach: (sink) => app.hub!.attach(sink),
@@ -471,7 +473,9 @@ async function main(): Promise<void> {
       console.log(`venv:     ${server.venv() ?? 'not found'}`)
       // The path Python will actually scan, not the setting as typed.
       console.log(`HF_HOME:  ${server.processEnv().HF_HOME ?? '(default) ~/.cache/huggingface'}`)
-      console.log(`helper:   ${findHelper(process.argv[1] ?? '') ?? 'not found'}`)
+      console.log(`helper:   ${findHelper() ?? 'not found'}`)
+      console.log(`ui:       ${findBundle() ?? 'not found (compact dashboard)'}`)
+      console.log(`cli:      ${selfPath()}`)
       return
     }
 
@@ -482,10 +486,11 @@ async function main(): Promise<void> {
   }
 }
 
-// Only run when executed, so the pure exports above stay importable in tests.
-if (process.argv[1] && /cli(\.[cm]?js|\.ts)?$/.test(process.argv[1])) {
-  void main().catch((err) => {
-    console.error(err)
-    process.exitCode = 1
-  })
-}
+// This module is only ever the CLI entry point — the pure, testable pieces
+// live in args.ts and pythonBridge.ts. It used to guard on argv[1] ending in
+// cli.js, which silently did nothing when invoked through the symlink npm
+// install creates.
+void main().catch((err) => {
+  console.error(err)
+  process.exitCode = 1
+})

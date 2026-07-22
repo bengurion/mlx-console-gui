@@ -35,6 +35,23 @@ export function lastJsonLine(stdout: string): unknown {
 }
 
 /**
+ * Where this CLI actually lives on disk.
+ *
+ * `process.argv[1]` is the path as invoked, which for an installed command is
+ * a symlink — `/opt/homebrew/bin/mlx-console` — whose directory contains none
+ * of the files that ship beside the CLI. Resolving it is the difference
+ * between finding the UI bundle and the helper script, and silently falling
+ * back to a cut-down page.
+ */
+export function selfPath(argv1 = process.argv[1] ?? ''): string {
+  try {
+    return fs.realpathSync(argv1)
+  } catch {
+    return argv1
+  }
+}
+
+/**
  * Where the helper script lives, relative to the running CLI.
  *
  * `dist/cli.js` sits beside `resources/` in both layouts that matter — a clone
@@ -49,10 +66,28 @@ export function helperCandidates(scriptPath: string): string[] {
 }
 
 export function findHelper(
-  scriptPath: string,
+  scriptPath: string = selfPath(),
   exists: (p: string) => boolean = (p) => fs.existsSync(p),
 ): string | undefined {
   return helperCandidates(scriptPath).find(exists)
+}
+
+/** The panel bundle, beside the CLI in every layout that ships it. */
+export function bundleCandidates(scriptPath: string): string[] {
+  const dir = path.dirname(scriptPath)
+  const paths = [
+    path.join(dir, 'webview', 'main.js'),
+    // For a CLI that is not itself inside dist/.
+    path.join(dir, '..', 'dist', 'webview', 'main.js'),
+  ].map((p) => path.normalize(p))
+  return [...new Set(paths)]
+}
+
+export function findBundle(
+  scriptPath: string = selfPath(),
+  exists: (p: string) => boolean = (p) => fs.existsSync(p),
+): string | undefined {
+  return bundleCandidates(scriptPath).find(exists)
 }
 
 export interface PythonBridgeOptions {
