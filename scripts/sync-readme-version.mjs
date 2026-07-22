@@ -37,8 +37,9 @@ const GROUPS = {
   server: 'Server',
   sampling: 'Sampling',
   huggingFace: 'Hugging Face',
+  webUi: 'Local dashboard',
 }
-const ORDER = ['general', 'server', 'sampling', 'huggingFace']
+const ORDER = ['general', 'server', 'sampling', 'huggingFace', 'webUi']
 
 /** Markdown table cells cannot contain a raw pipe or newline. */
 const cell = (s) => String(s).replace(/\|/g, '\\|').replace(/\s*\n\s*/g, ' ').trim()
@@ -49,19 +50,24 @@ const cell = (s) => String(s).replace(/\|/g, '\\|').replace(/\s*\n\s*/g, ' ').tr
  * One sentence is too blunt — several descriptions put the actionable half in
  * the second ("Lower is more deterministic"). Take sentences until the note is
  * long enough to be useful, then stop.
+ *
+ * Split on a boundary rather than on every `.`: descriptions contain IP
+ * addresses and version numbers, and a naive split silently drops the text
+ * before the first one.
  */
 const NOTE_TARGET = 150
+const SENTENCE_BREAK = /(?<=[.!?])\s+(?=[A-Z*`_])/
 
 function summarise(prop) {
   const text = (prop.markdownDescription ?? prop.description ?? '')
     .replace(/\*\*([^*]+)\*\*/g, '$1')
     .replace(/\*([^*]+)\*/g, '$1')
 
-  const sentences = text.match(/[^.]+\.(\s|$)/g) ?? [text]
+  const sentences = text.split(SENTENCE_BREAK)
   let note = ''
   for (const s of sentences) {
     if (note && note.length + s.length > NOTE_TARGET) break
-    note += s
+    note += (note ? ' ' : '') + s
   }
   return cell(note || text)
 }

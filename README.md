@@ -73,6 +73,10 @@ in MB/GB rather than raw bytes. Values the model knows about itself — context 
 sampling defaults, max output tokens — are read from its files, and anything you set
 explicitly always wins.
 
+**Or drive it from a browser** — an optional local dashboard on `127.0.0.1`, off by
+default, with the same editable settings and controls for when the panel is in the wrong
+window. Loopback only; see [The dashboard in a browser](#the-dashboard-in-a-browser-optional).
+
 **Use it in the editor, if you want** — served models appear in the VS Code model picker
 and as the `@mlx` chat participant, forwarding native and MCP tools. That is one client of
 the server, not the point of the extension.
@@ -113,6 +117,38 @@ from requests entirely rather than pinning a sampler you did not ask for.
 tokenizer, so the Metrics panel matches candidates on `vocab_size` rather than by name, and
 its weights load *in addition* to the main model.
 
+### The dashboard in a browser (optional)
+
+Sometimes the panel is in the wrong window, or you want the metrics on a second monitor
+while you work. Enable **`webUi.enabled`** and the extension serves the same dashboard as
+a web page:
+
+```
+http://127.0.0.1:8090/?t=<token>
+```
+
+Run **MLX: Open Web Dashboard (local)** from the command palette and it will offer to turn
+it on, then open the URL with the token already attached. Everything is editable there —
+the same settings, the same Start / Stop / Restart / Clear & reload buttons, going through
+the same code paths as the panel, so the two cannot drift apart. `webUi.port` changes the
+port; `0` lets the OS pick a free one.
+
+**This is for your machine only.** The listener binds to `127.0.0.1` in code and
+deliberately ignores `server.exposeToLan` — there is no setting that widens it, and it is
+not meant to be put on a network or deployed anywhere.
+
+It still requires a token, which is worth explaining. "Only listening on localhost" is not
+a security boundary in a browser: any page you happen to have open can POST to
+`127.0.0.1`. CORS hides the *response*, but a fire-and-forget request that flips a setting
+or stops your server succeeds anyway. So each session generates a fresh token, the `Host`
+header is validated (blocking DNS rebinding, and checked *before* the token so a probe
+learns nothing), and writes must be `application/json` — a content type a cross-origin
+HTML form physically cannot produce. Secrets are masked on the way out and an unchanged
+`••••••••` is never written back over the real value. The page itself loads no external
+fonts, scripts or styles, so it works offline and cannot leak the token to a third party.
+
+Off by default.
+
 ### Full reference
 
 <!-- settings:start -->
@@ -122,40 +158,40 @@ its weights load *in addition* to the main model.
 | Setting | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `pythonPath` | string | _(empty)_ | Path to a Python 3 interpreter used to create the managed virtual environment. Leave empty to auto-detect. |
-| `venvPath` | string | _(empty)_ | Directory for the managed Python virtual environment where mlx-lm is installed. venv (if it has mlx-lm) or the extension's global storage. |
-| `modelsDir` | string | _(empty)_ | Directory where models are downloaded and cached (sets HF_HOME; models live under <dir>/hub). server and the Hugging Face CLI. cache/huggingface). |
+| `venvPath` | string | _(empty)_ | Directory for the managed Python virtual environment where mlx-lm is installed. |
+| `modelsDir` | string | _(empty)_ | Directory where models are downloaded and cached (sets HF_HOME; models live under <dir>/hub). Shared with mlx_lm.server and the Hugging Face CLI. |
 | `defaultModel` | string | _(empty)_ | Default MLX model repo id used for chat when none is selected. |
 | `contextWindow` | number | `131072` | Context window advertised to VS Code for MLX models (`maxInputTokens`). |
 | `maxOutputTokens` | number | `4096` | Maximum tokens an MLX model may generate in one response. |
-| `modelOverrides` | object | `{}` | Per-model generation overrides, keyed by model id (or a converted model's local path). *` defaults. |
+| `modelOverrides` | object | `{}` | Per-model generation overrides, keyed by model id (or a converted model's local path). |
 
 #### Server
 
 | Setting | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `server.host` | string | `127.0.0.1` | server binds to (ignored when Expose to LAN is on). |
-| `server.port` | number | `8080` | server. |
+| `server.host` | string | `127.0.0.1` | Host the mlx_lm.server binds to (ignored when Expose to LAN is on). |
+| `server.port` | number | `8080` | Port for mlx_lm.server. |
 | `server.autoStart` | boolean | `true` | Start the server automatically when it is first needed. |
-| `server.exposeToLan` | boolean | `false` | 0 so other machines/tools can reach it. Security risk on untrusted networks. |
+| `server.exposeToLan` | boolean | `false` | Bind the server to 0.0.0.0 so other machines/tools can reach it. Security risk on untrusted networks. |
 | `server.apiKey` | string | _(empty)_ | Optional bearer token required for served requests (also shown in external-client snippets). |
-| `server.extraArgs` | array | `[]` | g. context/KV-cache limits, chat template). server --help` to see available flags. |
-| `server.promptCacheSize` | number | `0` | server --prompt-cache-size). 0 uses the server default. |
-| `server.promptCacheBytes` | number | `0` | server --prompt-cache-bytes`). Accepts a size such as `8 GB` or `512 MB`; a bare number is read as MB. |
-| `server.decodeConcurrency` | number | `0` | server --decode-concurrency`). 7 GB. The server default is 32, sized for a shared inference host — a single-user editor rarely needs more than 1–4. |
-| `server.promptConcurrency` | number | `0` | server --prompt-concurrency`). Server default 8. Raises prefill throughput for concurrent requests at the cost of transient memory. |
-| `server.prefillStepSize` | number | `0` | server --prefill-step-size`). Server default 2048. |
-| `server.draftModel` | string | _(empty)_ | server --draft-model`). Loaded in addition to the main model, so its weights count against the same GPU ceiling — check headroom in Metrics first. |
-| `server.numDraftTokens` | number | `0` | server --num-draft-tokens`). Server default 3. Only used when a draft model is set. 0 leaves the server default. |
+| `server.extraArgs` | array | `[]` | Extra command-line arguments passed to mlx_lm.server for machine-specific tuning (e.g. context/KV-cache limits, chat template). |
+| `server.promptCacheSize` | number | `0` | Maximum number of distinct KV caches held in the prompt cache (mlx_lm.server --prompt-cache-size). 0 uses the server default. |
+| `server.promptCacheBytes` | number | `0` | Maximum size of the KV/prompt caches (`mlx_lm.server --prompt-cache-bytes`). Accepts a size such as `8 GB` or `512 MB`; a bare number is read as MB. |
+| `server.decodeConcurrency` | number | `0` | Sequences decoded in parallel (`mlx_lm.server --decode-concurrency`). |
+| `server.promptConcurrency` | number | `0` | Prompts prefilled in parallel (`mlx_lm.server --prompt-concurrency`). Server default 8. |
+| `server.prefillStepSize` | number | `0` | Tokens per prefill step (`mlx_lm.server --prefill-step-size`). Server default 2048. |
+| `server.draftModel` | string | _(empty)_ | Small model used for speculative decoding (`mlx_lm.server --draft-model`). |
+| `server.numDraftTokens` | number | `0` | Tokens proposed per speculation step (`mlx_lm.server --num-draft-tokens`). Server default 3. |
 
 #### Sampling
 
 | Setting | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `sampling.temperature` | number | `0.7` | Sampling temperature. Lower is more deterministic (good for code). |
-| `sampling.topP` | number | `1` | Nucleus sampling top-p. 0 disables it. |
+| `sampling.topP` | number | `1` | Nucleus sampling top-p. 1.0 disables it. |
 | `sampling.topK` | number | `0` | Top-k sampling. 0 disables it. |
 | `sampling.minP` | number | `0` | Min-p sampling. 0 disables it. |
-| `sampling.repetitionPenalty` | number | `1` | Repetition penalty. 0 disables it. |
+| `sampling.repetitionPenalty` | number | `1` | Repetition penalty. 1.0 disables it. |
 | `sampling.maxTokens` | number | `2048` | Maximum tokens generated per response. |
 
 #### Hugging Face
@@ -164,12 +200,12 @@ its weights load *in addition* to the main model.
 | --- | --- | --- | --- |
 | `huggingFace.token` | string | _(empty)_ | Optional Hugging Face token for higher rate limits and gated models. |
 
-#### webUi
+#### Local dashboard
 
 | Setting | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `webUi.enabled` | boolean | `false` | 1`. Loopback only — it ignores Expose to LAN and cannot be reached from another machine. |
-| `webUi.port` | number | `8090` | Port for the local dashboard. Use 0 to let the OS pick a free one. 1 regardless. |
+| `webUi.enabled` | boolean | `false` | Serve an editable dashboard on `http://127.0.0.1`. Loopback only — it ignores Expose to LAN and cannot be reached from another machine. |
+| `webUi.port` | number | `8090` | Port for the local dashboard. Use 0 to let the OS pick a free one. Bound to 127.0.0.1 regardless. |
 
 <!-- settings:end -->
 
