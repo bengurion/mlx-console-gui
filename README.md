@@ -121,17 +121,30 @@ its weights load *in addition* to the main model.
 
 Sometimes the panel is in the wrong window, or you want the metrics on a second monitor
 while you work. Enable **`webUi.enabled`** and the extension serves the same dashboard as
-a web page:
+a web page on `http://127.0.0.1:8090`.
+
+**You never type the token.** Run **MLX: Open Web Dashboard (local)** from the command
+palette — it offers to enable the setting if it is off, then opens your browser on the full
+URL with the token already attached:
 
 ```
-http://127.0.0.1:8090/?t=<token>
+http://127.0.0.1:8090/?t=Qk3n…            ← generated for you, not something you invent
 ```
 
-Run **MLX: Open Web Dashboard (local)** from the command palette and it will offer to turn
-it on, then open the URL with the token already attached. Everything is editable there —
-the same settings, the same Start / Stop / Restart / Clear & reload buttons, going through
-the same code paths as the panel, so the two cannot drift apart. `webUi.port` changes the
-port; `0` lets the OS pick a free one.
+If you want it in a different browser, **MLX: Copy Web Dashboard URL (local)** puts the same
+URL on the clipboard. Nothing else needs it: once the page is open it holds the token itself
+and sends it with every request, so bookmarking the bare `http://127.0.0.1:8090` will simply
+be refused.
+
+The token is generated fresh each time the extension starts and is never written to disk or
+to the log. It lives only in that VS Code window, which means **one window owns the
+dashboard** — if a second window is also enabled it will report the port as busy; open the
+dashboard from the window that got there first, or give the second one its own `webUi.port`.
+Reloading the window mints a new token, so re-run the command rather than reusing an old tab.
+
+Everything is editable there — the same settings, the same Start / Stop / Restart /
+Clear & reload buttons, going through the same code paths as the panel, so the two cannot
+drift apart. `webUi.port` changes the port; `0` lets the OS pick a free one.
 
 **This is for your machine only.** The listener binds to `127.0.0.1` in code and
 deliberately ignores `server.exposeToLan` — there is no setting that widens it, and it is

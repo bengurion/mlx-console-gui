@@ -47,7 +47,14 @@ export class WebUiServer implements vscode.Disposable {
     return new Promise((resolve) => {
       server.on('error', (err) => {
         log.error(`Web UI could not listen on ${port}`, err)
-        void vscode.window.showErrorMessage(`MLX: web UI failed to start — ${String(err)}`)
+        // Each window has its own token, so a second window cannot share the
+        // first one's dashboard — say so rather than reporting a raw errno.
+        const busy = (err as NodeJS.ErrnoException).code === 'EADDRINUSE'
+        void vscode.window.showErrorMessage(
+          busy
+            ? `MLX: port ${port} is already in use — another VS Code window may already be serving the dashboard. Open it from that window, or change Web Ui: Port.`
+            : `MLX: web UI failed to start — ${String(err)}`,
+        )
         resolve(undefined)
       })
       // Explicit loopback bind; do not honour exposeToLan here.

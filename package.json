@@ -191,6 +191,11 @@
         "command": "mlxConsole.openWebUi",
         "title": "Open Web Dashboard (local)",
         "category": "MLX"
+      },
+      {
+        "command": "mlxConsole.copyWebUiUrl",
+        "title": "Copy Web Dashboard URL (local)",
+        "category": "MLX"
       }
     ],
     "menus": {

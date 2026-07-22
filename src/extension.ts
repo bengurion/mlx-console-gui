@@ -107,6 +107,13 @@ export async function activate(context: vscode.ExtensionContext) {
       // user to copy one.
       void vscode.env.openExternal(vscode.Uri.parse(url))
     }),
+    vscode.commands.registerCommand('mlxConsole.copyWebUiUrl', async () => {
+      // For pasting into a different browser than the default handler.
+      const url = webUi.url
+      if (!url) return void vscode.window.showErrorMessage('MLX: the dashboard is not listening.')
+      await vscode.env.clipboard.writeText(url)
+      void vscode.window.showInformationMessage('MLX: dashboard URL copied (it contains the session token).')
+    }),
   )
 
   context.subscriptions.push(
