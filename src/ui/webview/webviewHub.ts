@@ -843,8 +843,14 @@ export class WebviewHub {
       'setting aimed here.',
       '',
       'gpt-oss models answer in the harmony format, so raw content arrives as',
-      '<|channel|>analysis...<|channel|>final. This extension strips it; other',
-      'clients will show the reasoning channel as part of the answer.',
+      '<|channel|>analysis...<|channel|>final. This extension strips it; enable',
+      'cleanEndpoint to strip it for every other client too.',
+      '',
+      'A 404 from /v1/chat/completions is usually not a missing route:',
+      'mlx_lm.server answers 404 for any error during generation, with the real',
+      'message in the response body. If a client only shows the status, check the',
+      'server log. Sending tools to a model whose template does not support them',
+      'is one way to land here — turn tool calling off for that model.',
     ].join('\n')
 
     return {

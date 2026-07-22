@@ -108,6 +108,20 @@ export class HarmonyProxy {
       if (isStream) return void (await this.pipeStream(upstreamRes.body, res))
 
       const text = await upstreamRes.text()
+
+      /*
+       * Log what the server actually said when it refuses.
+       *
+       * `mlx_lm.server` catches every exception from generation and answers
+       * 404 with the real message in the body — so a client reports "not
+       * found" for what is really a template or sampling failure, and the one
+       * useful sentence is thrown away by whatever shows the status code. It
+       * costs nothing to write it down here.
+       */
+      if (!upstreamRes.ok) {
+        log.warn(`Upstream ${upstreamRes.status} for ${new URL(target).pathname}: ${text.slice(0, 500)}`)
+      }
+
       try {
         res.end(JSON.stringify(rewriteCompletion(JSON.parse(text))))
       } catch {
