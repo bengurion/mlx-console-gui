@@ -74,7 +74,7 @@ the server, not the point of the extension.
 
 ## Install
 
-No marketplace release yet — build it from source:
+No marketplace release yet, Comming Soon !!!!  — build it from source:
 
 ```bash
 git clone <this-repo>
@@ -148,7 +148,49 @@ working; inline completions (FIM), LoRA adapters and KV-cache quantization are n
 implemented — the last of those is blocked upstream, as `mlx_lm.server` exposes no flag
 for it.
 
-Expect rough edges. Issues and ideas are welcome.
+Expect rough edges.
+
+---
+
+## Contributing
+
+**Please do.** This started as a personal itch, and it is far more useful with other people
+poking at it — especially anyone running different Apple Silicon hardware, since almost all
+of the memory logic was tuned against a single M5 Max.
+
+**Fork it.** Genuinely: fork it, break it, run it against your own models, and tell me what
+happened. A bug report from an M1 Pro with 16 GB is worth more to this project than another
+feature written on my machine.
+
+**Ways to help, roughly by how much they are needed:**
+
+- **Try it on other hardware and report what you see.** M1/M2/M3/M4, any memory size. The
+  GPU ceiling, KV arithmetic and pre-flight checks all make assumptions that deserve
+  testing beyond one machine.
+- **Try it with other models.** Anything that is not gpt-oss — different tokenizers,
+  different attention shapes, models that ship real sampling defaults in
+  `generation_config.json`. Mis-parsed metadata is the most likely bug class here.
+- **Open an issue** for anything surprising, including bad wording. If a number in the
+  Metrics panel looks wrong, it may well be wrong.
+- **Send a pull request.** Small and focused is easier to review than large and complete.
+
+**Before opening a PR:**
+
+```bash
+npm run typecheck && npm test
+```
+
+There is no CI yet, so those two commands are the whole gate. If you change parsing or
+memory logic, please add a test — the existing suite exists because those are exactly the
+places where a wrong answer looks plausible.
+
+**House style**, so review is about substance rather than formatting: comments explain
+*why*, not what; when something is a guess or a limitation, say so in the code rather than
+letting the reader assume it is measured. Several comments in this codebase are warnings
+left for the next person, and they have earned their place.
+
+Questions and half-formed ideas are welcome in issues too — you do not need a patch to
+start a conversation.
 
 ---
 
