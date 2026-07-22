@@ -118,6 +118,9 @@ if (startIdx !== -1 && endIdx !== -1) {
   console.warn('[readme] settings markers not found — table not regenerated')
 }
 
+// The collapsed section announces how many settings it hides; keep that honest.
+out = out.replace(/All \d+ settings/g, `All ${Object.keys(props).length} settings`)
+
 if (out === before) {
   console.log(`[readme] already in sync (v${version}, ${Object.keys(props).length} settings)`)
 } else {
