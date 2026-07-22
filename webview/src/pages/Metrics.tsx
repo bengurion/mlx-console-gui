@@ -72,7 +72,10 @@ export function MetricsPage() {
   // The real allocation ceiling Metal reports, which is what a model must fit
   // inside — not the 75%-of-RAM heuristic used for rough fit estimates.
   const ceiling = m?.wiredLimitBytes ?? gpu?.maxRecommendedWorkingSetBytes
-  const inUse = gpu?.inUseBytes
+  // ioreg's in-use figure only counts what the GPU has mapped right now; an
+  // idle resident model reads near zero. occupiedBytes is the honest number.
+  const inUse = m?.occupiedBytes ?? gpu?.inUseBytes
+  const gpuMapped = gpu?.inUseBytes
   const nearCeiling = inUse !== undefined && ceiling ? inUse / ceiling : undefined
 
   async function editCeiling() {
@@ -148,6 +151,12 @@ export function MetricsPage() {
           </>
         )}
       </div>
+      {gpuMapped !== undefined && inUse !== undefined && inUse - gpuMapped > 1024 ** 3 && (
+        <div className="small muted">
+          Of that, {bytes(gpuMapped)} is mapped by the GPU right now — the rest is held by
+          the server process but idle. On unified memory both come from the same pool.
+        </div>
+      )}
       <div className="small muted">
         Driver allocated {bytes(gpu?.allocatedBytes)} · max single buffer{' '}
         {bytes(gpu?.maxBufferBytes)} · unified memory {bytes(gpu?.memoryBytes)}

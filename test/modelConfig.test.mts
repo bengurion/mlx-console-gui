@@ -17,6 +17,7 @@ import {
   selectDraftModel,
   parseVocabSize,
   availableFor,
+  occupancyBytes,
 } from '../src/services/modelConfig.ts'
 
 test('parseContextLength reads max_position_embeddings', () => {
@@ -322,4 +323,26 @@ test('parseVocabSize reads the target vocabulary', () => {
   assert.equal(parseVocabSize(JSON.stringify({ vocab_size: 201088 })), 201088)
   assert.equal(parseVocabSize(JSON.stringify({ text_config: { vocab_size: 32000 } })), 32000)
   assert.equal(parseVocabSize('nope'), undefined)
+})
+
+test('occupancyBytes prefers the server RSS when the GPU has gone idle', () => {
+  const GB = 1024 ** 3
+  // The real case: a resident model idling. ioreg says 1.8 GB, RSS says 52 GB.
+  assert.equal(occupancyBytes({ gpuInUseBytes: 1.8 * GB, serverRssBytes: 52 * GB }), 52 * GB)
+  // Mid-inference the GPU figure can lead; take whichever is larger.
+  assert.equal(occupancyBytes({ gpuInUseBytes: 70 * GB, serverRssBytes: 52 * GB }), 70 * GB)
+  // Either source alone still works.
+  assert.equal(occupancyBytes({ serverRssBytes: 52 * GB }), 52 * GB)
+  assert.equal(occupancyBytes({ gpuInUseBytes: 3 * GB }), 3 * GB)
+  assert.equal(occupancyBytes({}), undefined)
+})
+
+test('headroom is not inflated by an idle model', () => {
+  const GB = 1024 ** 3
+  const ceiling = 107.5 * GB
+  const occupied = occupancyBytes({ gpuInUseBytes: 1.8 * GB, serverRssBytes: 52 * GB })!
+  // Nothing of ours counted as reclaimable: 52 GB is genuinely spoken for.
+  assert.equal(availableFor(ceiling, occupied, 0), ceiling - 52 * GB)
+  // Using the GPU figure alone would have claimed ~50 GB of phantom headroom.
+  assert.ok(availableFor(ceiling, 1.8 * GB, 0) - availableFor(ceiling, occupied, 0) > 49 * GB)
 })

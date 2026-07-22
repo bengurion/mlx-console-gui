@@ -117,6 +117,11 @@ export interface MetricsSnapshot {
   }
   /** Explicit `iogpu.wired_limit_mb` override, when one is set. */
   wiredLimitBytes?: number
+  /**
+   * Memory genuinely spoken for: the larger of GPU in-use and the server's RSS.
+   * GPU in-use alone collapses when a resident model is idle.
+   */
+  occupiedBytes?: number
   /** Live sizing advice for `server.promptCacheBytes`. Advisory only. */
   promptCache: {
     recommendedBytes?: number

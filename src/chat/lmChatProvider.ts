@@ -64,7 +64,8 @@ class MlxLmChatProvider {
     try {
       const m = await this.metrics.sampleOnce()
       const ceiling = m.wiredLimitBytes ?? m.gpu.maxRecommendedWorkingSetBytes
-      const inUse = m.gpu.inUseBytes
+      // Not gpu.inUseBytes: it drops to near zero when a resident model idles.
+      const inUse = m.occupiedBytes ?? m.gpu.inUseBytes
       return {
         ceiling,
         inUse,

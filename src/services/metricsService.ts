@@ -23,7 +23,7 @@ import {
   powermetricsArgs,
   type ProcessGpuSample,
 } from './powermetrics'
-import { SERVER_DEFAULTS, recommendConcurrency } from './modelConfig'
+import { SERVER_DEFAULTS, occupancyBytes, recommendConcurrency } from './modelConfig'
 import { ModelConfigReader } from './modelConfigReader'
 import type { MetricsSnapshot } from '../shared/protocol'
 import type { EnvironmentManager } from '../backend/environmentManager'
@@ -135,24 +135,33 @@ export class MetricsService implements vscode.Disposable {
     const gpu = { ...parseIoregGpu(ioregOut), ...this.deviceInfo }
     const wiredLimitBytes = parseWiredLimit(wiredOut)
 
+    const proc = await this.serverProcess()
+    // GPU in-use collapses when a resident model goes idle; the server's RSS is
+    // the honest measure of what is actually held.
+    const occupied = occupancyBytes({
+      gpuInUseBytes: gpu.inUseBytes,
+      serverRssBytes: proc?.rssBytes,
+    })
+
     const snapshot: MetricsSnapshot = {
       at: Date.now(),
       cpu,
       memory: parseVmStat(vmStat, os.totalmem()),
       gpu,
       wiredLimitBytes,
+      occupiedBytes: occupied,
       promptCache: {
         ...recommendPromptCacheBytes({
           ceilingBytes: wiredLimitBytes ?? gpu.maxRecommendedWorkingSetBytes,
-          gpuInUseBytes: gpu.inUseBytes,
+          gpuInUseBytes: occupied,
         }),
         configuredBytes: Config.promptCacheBytes(),
       },
       concurrency: this.concurrencyAdvice(
         wiredLimitBytes ?? gpu.maxRecommendedWorkingSetBytes,
-        gpu.inUseBytes,
+        occupied,
       ),
-      process: await this.serverProcess(),
+      process: proc,
     }
     this._onDidSample.fire(snapshot)
     return snapshot

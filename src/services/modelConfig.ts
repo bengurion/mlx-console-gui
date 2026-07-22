@@ -212,18 +212,41 @@ export function preflightCheck(args: {
 /**
  * Memory a newly loaded model can actually claim.
  *
- * GPU in-use is device-wide. Our own resident model *will* be dropped before a
- * new one loads, so its weights are added back — but anything else holding GPU
- * memory (another app, another process) will not be freed and must come off
- * the budget.
+ * `occupiedBytes` must be the *true* occupancy, not `ioreg`'s GPU in-use
+ * figure: on unified memory an idle model sits in RAM without being mapped by
+ * the GPU, so in-use can read ~2 GB while the server process still holds 50+.
+ * See `occupancyBytes()` — the caller is expected to pass that.
+ *
+ * Our own resident model will be dropped before a new one loads, so its weights
+ * are added back; anything else holding memory will not be freed and must come
+ * off the budget.
  */
 export function availableFor(
   ceilingBytes: number,
-  gpuInUseBytes: number,
+  occupiedBytes: number,
   residentWeightBytes: number,
 ): number {
-  const heldByOthers = Math.max(0, gpuInUseBytes - residentWeightBytes)
+  const heldByOthers = Math.max(0, occupiedBytes - residentWeightBytes)
   return Math.max(0, ceilingBytes - heldByOthers)
+}
+
+/**
+ * How much memory is really spoken for right now.
+ *
+ * `ioreg`'s "In use system memory" only counts what the GPU has mapped at that
+ * instant — it collapses to near zero when a resident model is idle, which
+ * would make every headroom figure wildly optimistic. The server process's RSS
+ * is the honest measure of what its model is holding, so take whichever is
+ * larger: RSS covers the idle case, GPU in-use covers transient allocations
+ * that have not yet shown up in RSS.
+ */
+export function occupancyBytes(args: {
+  gpuInUseBytes?: number
+  serverRssBytes?: number
+}): number | undefined {
+  const { gpuInUseBytes, serverRssBytes } = args
+  if (gpuInUseBytes === undefined && serverRssBytes === undefined) return undefined
+  return Math.max(gpuInUseBytes ?? 0, serverRssBytes ?? 0)
 }
 
 /** Runtime multiplier over raw weights: KV cache, activations, framework overhead. */

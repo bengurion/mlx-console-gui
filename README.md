@@ -115,8 +115,6 @@ its weights load *in addition* to the main model.
 
 ### Full reference
 
-Generated from the manifest, so it always matches the build.
-
 <!-- settings:start -->
 
 #### General
