@@ -3,7 +3,7 @@
  * Types only — safe to import from both the Node and browser bundles.
  */
 
-export type ViewId = 'dashboard' | 'server' | 'models' | 'search' | 'downloads'
+export type ViewId = 'dashboard' | 'models' | 'search' | 'downloads' | 'settings' | 'clients'
 
 export type FitVerdict = 'fits' | 'tight' | 'too-large' | 'unknown'
 
@@ -169,6 +169,20 @@ export interface ModelProfile {
   draft: { modelId?: string; reason: string; configured: string }
 }
 
+/**
+ * Per-process GPU time, pushed on a timer once sampling is authorised.
+ *
+ * Separate from MetricsSnapshot because it is sampled far less often — the
+ * privileged command takes a second of wall clock, so it runs every 20s rather
+ * than in the 2s metrics loop.
+ */
+export interface ProcessGpuPush {
+  at: number
+  enabled: boolean
+  samples?: { name: string; pid: number; gpuMsPerS: number }[]
+  error?: string
+}
+
 /** One editable setting, derived from the package.json contribution schema. */
 export interface SettingSpec {
   key: string
@@ -223,6 +237,9 @@ export type RpcMethod =
   | 'updateSetting'
   | 'getMetrics'
   | 'samplePerProcessGpu'
+  | 'rootGpuStatus'
+  | 'enableRootGpu'
+  | 'disableRootGpu'
   | 'suggestDraftModel'
   | 'setWiredLimit'
   | 'startServer'
@@ -252,3 +269,4 @@ export type WebviewBound =
   | { type: 'push'; name: 'models'; data: LocalModel[] }
   | { type: 'push'; name: 'metrics'; data: MetricsSnapshot }
   | { type: 'push'; name: 'modelProfile'; data: ModelProfile }
+  | { type: 'push'; name: 'processGpu'; data: ProcessGpuPush }

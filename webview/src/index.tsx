@@ -4,7 +4,8 @@ import { ready } from './api'
 import { SearchPage } from './pages/Search'
 import { ModelsPage } from './pages/Models'
 import { DownloadsPage } from './pages/Downloads'
-import { ServerPage } from './pages/Server'
+import { SettingsView } from './pages/SettingsView'
+import { ClientsPage } from './pages/Clients'
 import { DashboardPage } from './pages/Dashboard'
 import type { ViewId } from '../../src/shared/protocol'
 
@@ -18,10 +19,11 @@ declare global {
 
 const pages: Record<ViewId, ComponentType> = {
   dashboard: DashboardPage,
-  server: ServerPage,
   models: ModelsPage,
   search: SearchPage,
   downloads: DownloadsPage,
+  settings: SettingsView,
+  clients: ClientsPage,
 }
 
 const container = document.getElementById('root')

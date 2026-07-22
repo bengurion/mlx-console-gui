@@ -12,10 +12,11 @@ import type { ViewId } from '../../shared/protocol'
 
 const VIEW_IDS: Record<ViewId, string> = {
   dashboard: 'mlxConsole.dashboard',
-  server: 'mlxConsole.server',
   models: 'mlxConsole.models',
   search: 'mlxConsole.search',
   downloads: 'mlxConsole.downloads',
+  settings: 'mlxConsole.server',
+  clients: 'mlxConsole.clients',
 }
 
 class MlxWebviewProvider implements vscode.WebviewViewProvider {

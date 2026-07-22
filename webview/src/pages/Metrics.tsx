@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { rpc, onPush, copy } from '../api'
 import { bytes } from '../format'
-import type { MetricsSnapshot, ModelProfile } from '../../../src/shared/protocol'
+import type { MetricsSnapshot, ModelProfile, ProcessGpuPush } from '../../../src/shared/protocol'
 
 /** A labelled bar. `max` of 0/undefined renders the label only. */
 function Bar({
@@ -172,17 +172,43 @@ export function MetricsPage() {
         </>
       )}
 
-      <div className="divider" />
-      <PromptCacheAdvice m={m} />
-
-      <div className="divider" />
-      <ConcurrencyAdvice m={m} />
+      {/* Prompt-cache and concurrency sizing moved to the settings view: they
+          are values you set, not measurements. What they are sized against is
+          still measured here. */}
 
       <div className="divider" />
       <ModelProfileCard />
 
       <div className="divider" />
       <PerProcessGpu serverPid={m?.process?.pid} />
+    </div>
+  )
+}
+
+/**
+ * The two sizing controls, for the settings view.
+ *
+ * They live with the settings rather than the metrics because each one writes
+ * a value; the numbers they quote come from the same live snapshot either way.
+ */
+export function TuningAdvice() {
+  const [m, setM] = useState<MetricsSnapshot>()
+  useEffect(() => onPush<MetricsSnapshot>('metrics', setM), [])
+  useEffect(() => {
+    void rpc<MetricsSnapshot>('getMetrics').then(setM).catch(() => undefined)
+  }, [])
+
+  return (
+    <div className="card col">
+      <strong>Memory tuning</strong>
+      <div className="small muted">
+        Sized against live headroom. Both are advisory — the input accepts any value, including
+        one this machine cannot hold.
+      </div>
+      <div className="divider" />
+      <PromptCacheAdvice m={m} />
+      <div className="divider" />
+      <ConcurrencyAdvice m={m} />
     </div>
   )
 }
@@ -205,6 +231,28 @@ function PerProcessGpu({ serverPid }: { serverPid?: number }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
   const [needsAuth, setNeedsAuth] = useState(false)
+  const [enabled, setEnabled] = useState<boolean>()
+  const [secret, setSecret] = useState('')
+  const [updatedAt, setUpdatedAt] = useState<number>()
+
+  // Once authorised the host samples on a timer and pushes the result, so this
+  // stays live without the view asking for anything.
+  useEffect(
+    () =>
+      onPush<ProcessGpuPush>('processGpu', (p) => {
+        setEnabled(p.enabled)
+        if (p.samples) setSamples(p.samples)
+        setUpdatedAt(p.at)
+        setError(p.error)
+      }),
+    [],
+  )
+
+  useEffect(() => {
+    void rpc<{ enabled: boolean }>('rootGpuStatus')
+      .then((r) => setEnabled(r.enabled))
+      .catch(() => undefined)
+  }, [])
 
   async function sample() {
     setBusy(true)
@@ -227,6 +275,42 @@ function PerProcessGpu({ serverPid }: { serverPid?: number }) {
     }
   }
 
+  /**
+   * Authorise once, then poll.
+   *
+   * The credential is sent to the local host, used to install a rule covering
+   * exactly this one read-only command, and dropped. It is never stored here
+   * either — the field is cleared whatever the outcome.
+   */
+  async function authorise() {
+    setBusy(true)
+    setError(undefined)
+    try {
+      const res = (await rpc('enableRootGpu', { secret })) as { ok: boolean; error?: string }
+      if (res.ok) {
+        setEnabled(true)
+        setNeedsAuth(false)
+      } else setError(res.error ?? 'Could not authorise sampling.')
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setSecret('')
+      setBusy(false)
+    }
+  }
+
+  async function revoke() {
+    setBusy(true)
+    try {
+      const res = (await rpc('disableRootGpu', { secret })) as { ok: boolean; error?: string }
+      if (res.ok) setEnabled(false)
+      else setError(res.error ?? 'Could not remove the rule.')
+    } finally {
+      setSecret('')
+      setBusy(false)
+    }
+  }
+
   const top = (samples ?? [])
     .filter((s) => s.gpuMsPerS > 0)
     .sort((a, b) => b.gpuMsPerS - a.gpuMsPerS)
@@ -236,13 +320,44 @@ function PerProcessGpu({ serverPid }: { serverPid?: number }) {
     <div>
       <div className="row spread">
         <strong className="small">Per-process GPU</strong>
-        <a onClick={() => void sample()}>{busy ? 'Sampling…' : 'Sample (needs root)'}</a>
+        <span className="row" style={{ gap: 8 }}>
+          {enabled && (
+            <span className="small muted">
+              auto, every 20s
+              {updatedAt ? ` · ${new Date(updatedAt).toLocaleTimeString()}` : ''}
+            </span>
+          )}
+          <a onClick={() => void sample()}>{busy ? 'Working…' : 'Sample now'}</a>
+          {enabled && <a onClick={() => void revoke()}>Revoke</a>}
+        </span>
       </div>
 
-      {samples === undefined && !error && (
-        <div className="small muted">
-          Figures above are device-wide (IOAccelerator). Attributing GPU time to a process
-          requires <code>sudo powermetrics</code>; you enter your own password in a terminal.
+      {enabled === false && (
+        <div className="col" style={{ gap: 4 }}>
+          <div className="small muted">
+            Figures above are device-wide (IOAccelerator). Attributing GPU time to a process needs{' '}
+            <code>powermetrics</code>, which requires root.
+          </div>
+          <div className="small muted">
+            Authorise once and it samples automatically every 20 seconds. Your credential is used
+            here only to allow that single read-only command, and is not kept.
+          </div>
+          <div className="row" style={{ gap: 6 }}>
+            <input
+              type="password"
+              placeholder="Account password"
+              value={secret}
+              autoComplete="off"
+              onChange={(e) => setSecret(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && secret) void authorise()
+              }}
+              style={{ maxWidth: 260 }}
+            />
+            <button disabled={busy || !secret} onClick={() => void authorise()}>
+              {busy ? 'Authorising…' : 'Authorise'}
+            </button>
+          </div>
         </div>
       )}
 

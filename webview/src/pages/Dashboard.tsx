@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { onPush } from '../api'
 import { bytes } from '../format'
 import { MetricsPage } from './Metrics'
+import { SystemStatus } from './SystemStatus'
 import type { MetricsSnapshot, ModelProfile, ServerStatusLite } from '../../../src/shared/protocol'
 
 /**
@@ -125,9 +126,12 @@ export function DashboardPage() {
         )}
       </div>
 
-      {/* The device, CPU, memory and GPU panel — including the ceiling editor
-          and the per-process GPU sampler — lives here now rather than under
-          the server controls, since this view is where measurements belong. */}
+      {/* Server, environment and storage: the state of the machine, which
+          belongs beside the measurements rather than with the settings. */}
+      <SystemStatus />
+
+      {/* Device, CPU, memory and GPU — including the ceiling editor and the
+          per-process GPU sampler. */}
       <MetricsPage />
 
       <PressureCard metrics={m} />

@@ -54,13 +54,13 @@
         },
         {
           "type": "webview",
-          "id": "mlxConsole.search",
-          "name": "Search"
+          "id": "mlxConsole.models",
+          "name": "Models"
         },
         {
           "type": "webview",
-          "id": "mlxConsole.models",
-          "name": "Models"
+          "id": "mlxConsole.search",
+          "name": "Search"
         },
         {
           "type": "webview",
@@ -70,7 +70,12 @@
         {
           "type": "webview",
           "id": "mlxConsole.server",
-          "name": "Server & Settings"
+          "name": "Settings"
+        },
+        {
+          "type": "webview",
+          "id": "mlxConsole.clients",
+          "name": "Clients"
         }
       ]
     },

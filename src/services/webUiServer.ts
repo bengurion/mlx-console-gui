@@ -331,10 +331,11 @@ interface BridgeClient {
 
 const VIEWS = [
   { id: 'dashboard', label: 'Dashboard' },
-  { id: 'server', label: 'Server & settings' },
   { id: 'models', label: 'Models' },
   { id: 'search', label: 'Search Hugging Face' },
   { id: 'downloads', label: 'Downloads' },
+  { id: 'settings', label: 'Settings' },
+  { id: 'clients', label: 'Clients' },
 ] as const
 
 /**

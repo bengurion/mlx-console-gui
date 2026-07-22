@@ -1,6 +1,10 @@
 import * as os from 'node:os'
 import { log } from '../../core/logging'
 import { settings } from '../../core/settings'
+import { RootSampler } from '../../services/rootSampler'
+
+/** How often the privileged sampler runs once authorised. */
+const PROCESS_GPU_INTERVAL_MS = 20_000
 import type { Disposable } from '../../core/events'
 import { Config } from '../../config'
 import { fitVerdict } from '../../services/modelFit'
@@ -100,6 +104,8 @@ export class WebviewHub {
   private readonly webviews = new Set<MessageSink>()
   private readonly disposables: Disposable[] = []
   private readonly modelConfig = new ModelConfigReader()
+  private readonly rootSampler = new RootSampler()
+  private processGpuTimer: NodeJS.Timeout | undefined
   /** Guards against re-profiling on every status tick for the same model. */
   private lastProfiled: string | undefined
 
@@ -268,6 +274,36 @@ export class WebviewHub {
   }
 
   /** Read a model's own files and broadcast the result. */
+  /**
+   * Poll per-process GPU while the grant is in place.
+   *
+   * Twenty seconds, not two: the privileged command samples for a full second
+   * of wall clock, so running it in the metrics loop would keep a child
+   * process alive half the time.
+   */
+  private startProcessGpuPolling(intervalMs = PROCESS_GPU_INTERVAL_MS): void {
+    if (this.processGpuTimer) return
+    const tick = async () => {
+      const res = await this.rootSampler.sample()
+      this.broadcast({
+        type: 'push',
+        name: 'processGpu',
+        data: { at: Date.now(), enabled: res.ok, samples: res.samples, error: res.error },
+      })
+      // A revoked grant should stop the timer rather than fail every 20s.
+      if (!res.ok && !(await this.rootSampler.isEnabled())) this.stopProcessGpuPolling()
+    }
+    void tick()
+    this.processGpuTimer = setInterval(() => void tick(), intervalMs)
+  }
+
+  private stopProcessGpuPolling(): void {
+    if (!this.processGpuTimer) return
+    clearInterval(this.processGpuTimer)
+    this.processGpuTimer = undefined
+    this.broadcast({ type: 'push', name: 'processGpu', data: { at: Date.now(), enabled: false } })
+  }
+
   /** Refcounted metrics sampling, for hosts that tie it to visibility. */
   sampleMetrics(): Disposable {
     return this.deps.metrics.subscribe()
@@ -508,6 +544,24 @@ export class WebviewHub {
         return this.suggestDraftModel()
       case 'samplePerProcessGpu':
         return this.deps.metrics.samplePerProcessGpu()
+      case 'rootGpuStatus':
+        return { enabled: await this.rootSampler.isEnabled() }
+      case 'enableRootGpu': {
+        // Used here and nowhere else: not stored, not logged, not echoed back.
+        const secret = String((params as { secret?: unknown })?.secret ?? '')
+        if (!secret) return { ok: false, error: 'An account credential is required.' }
+        const res = await this.rootSampler.enable(secret)
+        if (res.ok) this.startProcessGpuPolling()
+        return res
+      }
+      case 'disableRootGpu': {
+        const given = (params as { secret?: unknown })?.secret
+        const res = await this.rootSampler.disable(
+          typeof given === 'string' && given ? given : undefined,
+        )
+        if (res.ok) this.stopProcessGpuPolling()
+        return res
+      }
       case 'setWiredLimit':
         return this.setWiredLimit(Number((params as { megabytes?: unknown })?.megabytes))
       default:
@@ -631,6 +685,7 @@ export class WebviewHub {
   }
 
   dispose() {
+    this.stopProcessGpuPolling()
     for (const d of this.disposables) d.dispose()
   }
 }
