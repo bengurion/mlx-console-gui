@@ -46,6 +46,13 @@ model and what else is running. The extension reads them live rather than assumi
 explicit about the one thing it cannot know: macOS exposes no per-process GPU memory
 accounting at any privilege level, so "held by other apps" is inferred, not measured.
 
+> **Reference machine.** Everything here was developed and measured on a **128 GB M5 Max**
+> running **gpt-oss-120b** — where the usable ceiling turns out to be 107.5 GB of the 128,
+> the desktop already holds ~22 GB before any model loads, and the model's KV cache costs
+> ~72 KiB per token (9.7 GB at its full 131k context). Your figures will differ; that is
+> exactly why the extension measures rather than hardcodes. Reports from other hardware are
+> very welcome — see [Contributing](#contributing).
+
 ## What it does
 
 **Run the server** — start, stop and supervise `mlx_lm.server`. Its OpenAI-compatible
