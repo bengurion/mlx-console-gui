@@ -220,17 +220,35 @@ const api = (p, body) => fetch(p + '?t=' + encodeURIComponent(T), body ? {
 const toast = () => { const e = document.getElementById('saved');
   e.style.opacity = 1; setTimeout(() => e.style.opacity = 0, 900) };
 
+const show = v => v == null ? '' : (typeof v === 'object' ? JSON.stringify(v) : String(v));
+const fields = new Map();
+
 function control(s) {
-  if (s.type === 'boolean') {
-    const i = document.createElement('input'); i.type = 'checkbox'; i.checked = !!s.value;
-    i.onchange = () => save(s.key, i.checked); return i;
-  }
   const i = document.createElement('input');
-  i.type = s.secret ? 'password' : 'text';
-  i.value = s.value == null ? '' : (typeof s.value === 'object' ? JSON.stringify(s.value) : s.value);
-  i.placeholder = s.default == null ? '' : String(s.default);
-  i.onchange = () => save(s.key, i.value);
+  if (s.type === 'boolean') {
+    i.type = 'checkbox'; i.checked = !!s.value;
+    i.onchange = () => save(s.key, i.checked);
+  } else {
+    i.type = s.secret ? 'password' : 'text';
+    i.value = show(s.value);
+    i.placeholder = s.default == null ? '' : String(s.default);
+    i.onchange = () => save(s.key, i.value);
+  }
+  fields.set(s.key, i);
   return i;
+}
+
+/**
+ * Adopt changes made in the VS Code panel, so the two views agree.
+ * Never touch the field being typed in, or edits get eaten mid-keystroke.
+ */
+function sync(settings) {
+  for (const s of settings) {
+    const i = fields.get(s.key);
+    if (!i || i === document.activeElement) continue;
+    if (i.type === 'checkbox') i.checked = !!s.value;
+    else if (i.value !== show(s.value)) i.value = show(s.value);
+  }
 }
 const save = (key, value) => api('/api/setting', { key, value }).then(r => r.ok && toast());
 
@@ -244,7 +262,7 @@ async function refresh() {
   document.getElementById('mem').style.width = pct + '%';
 
   const host = document.getElementById('settings');
-  if (host.dataset.built) return;           // do not clobber a field mid-edit
+  if (host.dataset.built) return sync(settings);
   host.dataset.built = '1';
   for (const s of settings) {
     const row = document.createElement('div'); row.className = 'row';
