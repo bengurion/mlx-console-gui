@@ -10,6 +10,9 @@ import {
   parsePs,
   recommendPromptCacheBytes,
   MAX_PROMPT_CACHE,
+  pagingRates,
+  parsePagingCounters,
+  parseSwapUsage,
 } from '../src/services/metrics.ts'
 
 // Captured from an M5 Max (page size 16384, not the 4096 many parsers assume).
@@ -125,4 +128,57 @@ test('recommendPromptCacheBytes needs a ceiling', () => {
   const r = recommendPromptCacheBytes({ ceilingBytes: undefined, gpuInUseBytes: 1 })
   assert.equal(r.recommendedBytes, undefined)
   assert.match(r.reason, /ceiling unknown/i)
+})
+
+// ---- local impact: swap and paging ----------------------------------------
+
+test('swap usage is read from sysctl, in the units it reports', () => {
+  const out = 'vm.swapusage: total = 3072.00M  used = 1803.31M  free = 1268.69M  (encrypted)'
+  const swap = parseSwapUsage(out)
+  assert.equal(swap?.totalBytes, 3072 * 1024 ** 2)
+  assert.equal(Math.round((swap?.usedBytes ?? 0) / 1024 ** 2), 1803)
+  assert.equal(Math.round((swap?.freeBytes ?? 0) / 1024 ** 2), 1269)
+  assert.ok(Number.isInteger(swap?.usedBytes), 'whole bytes, not a fraction of one')
+
+  // A machine with swap disabled, and junk, must not fabricate numbers.
+  assert.deepEqual(parseSwapUsage('vm.swapusage: total = 0.00M  used = 0.00M  free = 0.00M'), {
+    totalBytes: 0,
+    usedBytes: 0,
+    freeBytes: 0,
+  })
+  assert.equal(parseSwapUsage('nonsense'), undefined)
+})
+
+test('paging counters come from the same vm_stat output', () => {
+  const out = [
+    'Mach Virtual Memory Statistics: (page size of 16384 bytes)',
+    'Pages free:                             1000.',
+    'Pageins:                               50000.',
+    'Pageouts:                               2000.',
+    'Swapins:                                 300.',
+    'Swapouts:                                900.',
+  ].join('\n')
+  const c = parsePagingCounters(out)
+  assert.equal(c?.pageSize, 16384, 'Apple Silicon pages are 16K, not 4K')
+  assert.equal(c?.swapOuts, 900)
+  assert.equal(c?.pageIns, 50000)
+})
+
+test('paging rates need two samples and survive a counter reset', () => {
+  const base = { pageIns: 0, pageOuts: 100, swapIns: 10, swapOuts: 200, pageSize: 16384 }
+
+  assert.deepEqual(pagingRates(undefined, base, 2000), {}, 'one sample proves nothing')
+
+  const later = { ...base, swapOuts: 300, pageOuts: 150 }
+  const rates = pagingRates(base, later, 2000)
+  // 100 pages x 16K over 2s = 819200 B/s
+  assert.equal(rates.swapOutBytesPerSec, (100 * 16384) / 2)
+  assert.equal(rates.pageOutBytesPerSec, (50 * 16384) / 2)
+
+  const rebooted = { ...base, swapOuts: 5 }
+  assert.equal(
+    pagingRates(base, rebooted, 2000).swapOutBytesPerSec,
+    undefined,
+    'a counter going backwards is unknown, not zero',
+  )
 })

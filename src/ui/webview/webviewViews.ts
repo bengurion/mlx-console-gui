@@ -15,6 +15,7 @@ const VIEW_IDS: Record<ViewId, string> = {
   models: 'mlxConsole.models',
   downloads: 'mlxConsole.downloads',
   server: 'mlxConsole.server',
+  impact: 'mlxConsole.impact',
 }
 
 class MlxWebviewProvider implements vscode.WebviewViewProvider {

@@ -9,7 +9,10 @@ import { Config } from '../config'
 import {
   cpuPercent,
   cpuSample,
+  pagingRates,
   parseDeviceInfo,
+  parsePagingCounters,
+  parseSwapUsage,
   parseIoregGpu,
   parsePs,
   parseVmStat,
@@ -17,6 +20,7 @@ import {
   recommendPromptCacheBytes,
   type CpuSample,
   type GpuDeviceInfo,
+  type PagingCounters,
 } from './metrics'
 import {
   parseProcessGpu,
@@ -52,6 +56,7 @@ async function tryRun(cmd: string, args: string[]): Promise<string> {
 export class MetricsService implements Disposable {
   private timer: NodeJS.Timeout | undefined
   private prevCpu: CpuSample | undefined
+  private prevPaging: { counters: PagingCounters; at: number } | undefined
   private deviceInfo: GpuDeviceInfo | undefined
   private deviceInfoTried = false
   private subscribers = 0
@@ -126,13 +131,29 @@ export class MetricsService implements Disposable {
     }
   }
 
+  /**
+   * Paging rates since the previous sample.
+   *
+   * Cumulative counters are useless on their own — a machine up for a week has
+   * swapped at some point. What matters is whether it is swapping *now*, while
+   * a model is resident.
+   */
+  private pagingSince(counters: PagingCounters | undefined) {
+    if (!counters) return undefined
+    const at = Date.now()
+    const rates = pagingRates(this.prevPaging?.counters, counters, at - (this.prevPaging?.at ?? at))
+    this.prevPaging = { counters, at }
+    return rates
+  }
+
   async sampleOnce(): Promise<MetricsSnapshot> {
     await this.loadDeviceInfo()
 
-    const [vmStat, ioregOut, wiredOut] = await Promise.all([
+    const [vmStat, ioregOut, wiredOut, swapOut] = await Promise.all([
       tryRun('vm_stat', []),
       tryRun('ioreg', ['-r', '-d', '1', '-w', '0', '-c', 'IOAccelerator']),
       tryRun('sysctl', ['iogpu.wired_limit_mb']),
+      tryRun('sysctl', ['vm.swapusage']),
     ])
 
     const next = cpuSample(os.cpus())
@@ -161,6 +182,8 @@ export class MetricsService implements Disposable {
       gpu,
       wiredLimitBytes,
       occupiedBytes: occupied,
+      swap: parseSwapUsage(swapOut),
+      paging: this.pagingSince(parsePagingCounters(vmStat)),
       promptCache: {
         ...recommendPromptCacheBytes({
           ceilingBytes: wiredLimitBytes ?? gpu.maxRecommendedWorkingSetBytes,

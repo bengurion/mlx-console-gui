@@ -66,6 +66,11 @@
           "type": "webview",
           "id": "mlxConsole.server",
           "name": "Server & Settings"
+        },
+        {
+          "type": "webview",
+          "id": "mlxConsole.impact",
+          "name": "Local impact"
         }
       ]
     },

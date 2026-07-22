@@ -3,7 +3,7 @@
  * Types only — safe to import from both the Node and browser bundles.
  */
 
-export type ViewId = 'search' | 'models' | 'downloads' | 'server'
+export type ViewId = 'search' | 'models' | 'downloads' | 'server' | 'impact'
 
 export type FitVerdict = 'fits' | 'tight' | 'too-large' | 'unknown'
 
@@ -117,6 +117,18 @@ export interface MetricsSnapshot {
   }
   /** Explicit `iogpu.wired_limit_mb` override, when one is set. */
   wiredLimitBytes?: number
+  /** Swap in use. Non-zero while a model is resident means it cost you. */
+  swap?: { totalBytes: number; usedBytes: number; freeBytes: number }
+  /**
+   * Paging rates since the previous sample. Sustained swap-outs are the
+   * clearest evidence that the machine is being squeezed rather than merely
+   * being busy.
+   */
+  paging?: {
+    swapOutBytesPerSec?: number
+    swapInBytesPerSec?: number
+    pageOutBytesPerSec?: number
+  }
   /**
    * Memory genuinely spoken for: the larger of GPU in-use and the server's RSS.
    * GPU in-use alone collapses when a resident model is idle.

@@ -5,6 +5,7 @@ import { SearchPage } from './pages/Search'
 import { ModelsPage } from './pages/Models'
 import { DownloadsPage } from './pages/Downloads'
 import { ServerPage } from './pages/Server'
+import { ImpactPage } from './pages/Impact'
 import type { ViewId } from '../../src/shared/protocol'
 
 declare global {
@@ -20,6 +21,7 @@ const pages: Record<ViewId, ComponentType> = {
   models: ModelsPage,
   downloads: DownloadsPage,
   server: ServerPage,
+  impact: ImpactPage,
 }
 
 const container = document.getElementById('root')

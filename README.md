@@ -142,6 +142,13 @@ how long it took to load; how much headroom is left; and a per-model breakdown o
 window, KV cost per token, weight size and vocabulary, read from the model's own
 `config.json`.
 
+**Measure what it costs the machine** — a **Local impact** view for when utilisation is not the
+question. It shows the unified-memory budget as one pool (model / other apps / headroom),
+swap and compressor pressure — the difference between a machine working hard and one being
+squeezed — what each context length would cost in KV cache against the headroom you actually
+have, and a three-minute trend. Per-process GPU attribution is one button away, via `sudo
+powermetrics` run in a terminal you can read.
+
 **Configure in place** — every setting is editable from the UI, with sizes in MB/GB rather
 than raw bytes. Values the model knows about itself — context window, sampling defaults, max
 output tokens — are read from its files, and anything you set explicitly always wins.

@@ -334,6 +334,7 @@ const VIEWS = [
   { id: 'models', label: 'Models' },
   { id: 'search', label: 'Search Hugging Face' },
   { id: 'downloads', label: 'Downloads' },
+  { id: 'impact', label: 'Local impact' },
 ] as const
 
 /**

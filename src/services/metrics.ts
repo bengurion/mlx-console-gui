@@ -23,6 +23,89 @@ export interface MemoryStats {
   usedBytes: number
 }
 
+/**
+ * Swap and compressor activity — the honest measure of local impact.
+ *
+ * Utilisation says how hard the machine is working; this says whether it is
+ * *suffering*. Wired GPU memory cannot be paged out, so an oversized model
+ * does not fail — it squeezes everything else until macOS starts compressing
+ * and then swapping. Sustained swap-outs while a model is resident is the
+ * signal that you took more than the machine had.
+ */
+export interface SwapStats {
+  totalBytes: number
+  usedBytes: number
+  freeBytes: number
+}
+
+/** Cumulative paging counters, in pages, as vm_stat reports them. */
+export interface PagingCounters {
+  pageIns: number
+  pageOuts: number
+  swapIns: number
+  swapOuts: number
+  pageSize: number
+}
+
+/**
+ * `sysctl vm.swapusage` reports megabytes with an M suffix:
+ *   vm.swapusage: total = 3072.00M  used = 1803.31M  free = 1268.69M
+ */
+export function parseSwapUsage(output: string): SwapStats | undefined {
+  const mb = (label: string): number | undefined => {
+    const m = output.match(new RegExp(`${label}\\s*=\\s*([\\d.]+)([KMG])`, 'i'))
+    if (!m) return undefined
+    const scale = { k: 1024, m: 1024 ** 2, g: 1024 ** 3 }[m[2].toLowerCase()] ?? 1
+    // sysctl reports two decimal places of megabytes; whole bytes is the unit
+    // every consumer expects, and a fractional byte reads as a bug.
+    return Math.round(Number(m[1]) * scale)
+  }
+  const totalBytes = mb('total')
+  const usedBytes = mb('used')
+  const freeBytes = mb('free')
+  if (totalBytes === undefined || usedBytes === undefined) return undefined
+  return { totalBytes, usedBytes, freeBytes: freeBytes ?? Math.max(0, totalBytes - usedBytes) }
+}
+
+/** Cumulative paging counters from the same vm_stat output. */
+export function parsePagingCounters(output: string): PagingCounters | undefined {
+  const pageSize = Number(output.match(/page size of (\d+) bytes/)?.[1])
+  if (!Number.isFinite(pageSize) || pageSize <= 0) return undefined
+  const count = (label: string): number => {
+    const m = output.match(new RegExp(`${label}:\\s+(\\d+)\\.`, 'i'))
+    return m ? Number(m[1]) : 0
+  }
+  return {
+    pageIns: count('Pageins'),
+    pageOuts: count('Pageouts'),
+    swapIns: count('Swapins'),
+    swapOuts: count('Swapouts'),
+    pageSize,
+  }
+}
+
+/**
+ * Bytes per second between two cumulative readings.
+ *
+ * Returns undefined rather than 0 when there is no previous sample or the
+ * counters went backwards (a reboot), so the UI can say "measuring" instead of
+ * claiming a calm machine it has not observed.
+ */
+export function pagingRates(
+  prev: PagingCounters | undefined,
+  next: PagingCounters,
+  elapsedMs: number,
+): { swapOutBytesPerSec?: number; swapInBytesPerSec?: number; pageOutBytesPerSec?: number } {
+  if (!prev || elapsedMs <= 0) return {}
+  const perSec = (a: number, b: number) =>
+    b < a ? undefined : ((b - a) * next.pageSize) / (elapsedMs / 1000)
+  return {
+    swapOutBytesPerSec: perSec(prev.swapOuts, next.swapOuts),
+    swapInBytesPerSec: perSec(prev.swapIns, next.swapIns),
+    pageOutBytesPerSec: perSec(prev.pageOuts, next.pageOuts),
+  }
+}
+
 export interface GpuStats {
   /** 0-100. Overall device utilization as reported by the accelerator. */
   utilizationPercent?: number
