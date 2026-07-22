@@ -151,6 +151,11 @@
         "category": "MLX"
       },
       {
+        "command": "mlxConsole.stopAllServers",
+        "title": "Stop All Servers (including orphans)",
+        "category": "MLX"
+      },
+      {
         "command": "mlxConsole.restartServer",
         "title": "Restart Server",
         "category": "MLX"

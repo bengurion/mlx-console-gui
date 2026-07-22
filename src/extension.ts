@@ -8,6 +8,7 @@ import { Config } from './config'
 import * as path from 'node:path'
 import { EnvironmentManager } from './backend/environmentManager'
 import { ServerManager } from './backend/serverManager'
+import { stopAllServers } from './backend/stopAll'
 import { PythonHelper } from './backend/pythonHelper'
 import { HuggingFaceService } from './services/huggingFaceService'
 import { CacheService } from './services/cacheService'
@@ -184,6 +185,23 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('mlxConsole.showMenu', () => showMenu(env, server)),
     vscode.commands.registerCommand('mlxConsole.startServer', () => server.ensureRunning(true)),
     vscode.commands.registerCommand('mlxConsole.stopServer', () => server.stop()),
+    vscode.commands.registerCommand('mlxConsole.stopAllServers', async () => {
+      /*
+       * Servers are spawned detached so closing a window does not unload a
+       * model — which is wanted, but means a crashed owner leaves one running
+       * with nobody tracking it. This finds them by what they are rather than
+       * by what we remembered, so there is a deliberate way to clean up.
+       */
+      const { stopped, forced } = await stopAllServers()
+      const total = stopped.length + forced.length
+      void vscode.window.showInformationMessage(
+        total === 0
+          ? 'MLX: no server processes were running.'
+          : `MLX: stopped ${total} server${total === 1 ? '' : 's'}` +
+              (forced.length ? ` (${forced.length} needed SIGKILL)` : '') +
+              '.',
+      )
+    }),
     vscode.commands.registerCommand('mlxConsole.restartServer', () => server.restart()),
     vscode.commands.registerCommand('mlxConsole.testCompletion', () => testCompletion(server)),
     vscode.commands.registerCommand('mlxConsole.openSearch', () =>

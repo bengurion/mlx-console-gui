@@ -8,11 +8,11 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import * as os from 'node:os'
-import { spawn } from 'node:child_process'
-import { buildServerArgs } from '../backend/serverArgs'
-import { isUsableState, parseState, pidAlive, type SharedServerState } from '../backend/serverRegistry'
-import { resolveVenv, venvBin, venvCandidates, userDirs, STORAGE_IDS } from './hostPaths'
-import type { SettingsStore } from './settingsStore'
+import { execFile, spawn } from 'node:child_process'
+import { buildServerArgs } from '../backend/serverArgs.ts'
+import { isUsableState, parseState, pidAlive, type SharedServerState } from '../backend/serverRegistry.ts'
+import { resolveVenv, venvBin, venvCandidates, userDirs, STORAGE_IDS } from './hostPaths.ts'
+import type { SettingsStore } from './settingsStore.ts'
 
 /** How long a SIGTERM gets before SIGKILL. Matches the extension. */
 export const STOP_TIMEOUT_MS = 5000
@@ -45,8 +45,57 @@ export function readSharedState(files: string[]): SharedServerState | undefined 
   return undefined
 }
 
+/**
+ * Every `mlx_lm.server` running for this user, however it was started.
+ *
+ * The registry only records the server we last knew about. Servers are spawned
+ * detached so they survive the window that started them — which is deliberate,
+ * but it means a crashed or timed-out owner leaves one reparented to init with
+ * nobody tracking it. Those orphans hold the port and quietly hold gigabytes,
+ * so cleaning up has to be able to find them by what they are, not by what we
+ * remembered.
+ */
+export function findServerPids(): Promise<number[]> {
+  return new Promise((resolve) => {
+    // -f matches the full command line; the binary itself is a python shim.
+    execFile('pgrep', ['-f', 'mlx_lm.server'], (err, stdout) => {
+      if (err && !stdout) return resolve([])
+      resolve(parsePgrepPids(stdout, process.pid))
+    })
+  })
+}
+
+/**
+ * Pids from pgrep output, excluding our own.
+ *
+ * `pgrep -f mlx_lm.server` matches on the whole command line, so a process
+ * whose arguments merely mention it — this CLI, a grep, an editor — would
+ * match too. Excluding self is the one case that is both certain and fatal:
+ * killing it mid-shutdown would leave the very orphans this is cleaning up.
+ */
+export function parsePgrepPids(stdout: string, selfPid: number): number[] {
+  return stdout
+    .split('\n')
+    .map((line) => Number(line.trim()))
+    .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== selfPid)
+}
+
+/** Signal a pid, reporting whether it was there to signal. */
+function signal(pid: number, sig: NodeJS.Signals): boolean {
+  try {
+    process.kill(pid, sig)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export class HeadlessServer {
-  constructor(private readonly settings: SettingsStore) {}
+  private readonly settings: SettingsStore
+
+  constructor(settings: SettingsStore) {
+    this.settings = settings
+  }
 
   get port(): number {
     const n = Number(this.settings.get('server.port', 8080))
@@ -157,6 +206,35 @@ export class HeadlessServer {
   async restart(): Promise<{ ok: boolean; message: string }> {
     await this.stop()
     return this.start()
+  }
+
+  /**
+   * Stop every mlx_lm.server, including ones nothing is tracking.
+   *
+   * Politely first, then not: a server mid-load ignores SIGTERM until it
+   * finishes reading weights, and waiting minutes for that is not what someone
+   * asking to shut everything down wants.
+   */
+  async stopAll(): Promise<{ stopped: number[]; forced: number[] }> {
+    const pids = await findServerPids()
+    const stopped: number[] = []
+    const forced: number[] = []
+    if (!pids.length) return { stopped, forced }
+
+    for (const pid of pids) signal(pid, 'SIGTERM')
+
+    const deadline = Date.now() + STOP_TIMEOUT_MS
+    let remaining = pids
+    while (remaining.length && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 200))
+      const gone = remaining.filter((pid) => !pidAlive(pid))
+      stopped.push(...gone)
+      remaining = remaining.filter((pid) => pidAlive(pid))
+    }
+    for (const pid of remaining) {
+      if (signal(pid, 'SIGKILL')) forced.push(pid)
+    }
+    return { stopped, forced }
   }
 
   /**

@@ -41,8 +41,9 @@ const run = promisify(execFile)
 const HELP = `mlx-console ${pkg.version} — MLX Console without VS Code
 
   mlx-console serve [--port N]   serve the local dashboard (foreground)
+                                 --keep-server leaves the model server up on exit
   mlx-console start              start mlx_lm.server
-  mlx-console stop               stop mlx_lm.server
+  mlx-console stop [--all]       stop mlx_lm.server (--all: every one running)
   mlx-console restart            restart mlx_lm.server
   mlx-console status [--json]    what is running, and what it costs
   mlx-console models [--json]    local models, scanned from your models directory
@@ -254,7 +255,10 @@ function buildApp(settings: SettingsStore, helper: string | undefined) {
   return { env, server, metrics, hub }
 }
 
-async function serve(port?: number): Promise<void> {
+/** How long a graceful exit waits before quitting regardless. */
+const STOP_ALL_TIMEOUT_MS = 8000
+
+async function serve(port?: number, keepServer = false): Promise<void> {
   const settings = loadSettings()
   // Everything downstream reads settings through this, exactly as the
   // extension reads them through VSCode's configuration.
@@ -347,17 +351,39 @@ async function serve(port?: number): Promise<void> {
     if (process.stdout.isTTY) {
       console.log(`\n  MLX Console — ${url}\n`)
       console.log('  Settings: ~/.mlx-console/config.json')
-      console.log('  Ctrl-C to stop the dashboard (the model server keeps running).\n')
+      console.log(
+      keepServer
+        ? '  Ctrl-C stops the dashboard; the model server keeps running.\n'
+        : '  Ctrl-C stops the dashboard and the model server (--keep-server to leave it up).\n',
+    )
     } else {
       console.log(`MLX Console listening on 127.0.0.1:${uiPort} — run \`mlx-console url\` for the link.`)
     }
   }
 
+  /**
+   * Shut down what we started.
+   *
+   * Servers are spawned detached so they outlive a VSCode window, which is
+   * wanted there — but quitting the daemon deliberately is a different act,
+   * and leaving a process holding tens of gigabytes behind is not a graceful
+   * exit. So Ctrl-C stops the model servers too, unless --keep-server says
+   * otherwise.
+   */
   const shutdown = () => {
     clearUrlFile()
-    void ui.stop().then(() => process.exit(0))
+    const done = () => process.exit(0)
+    void (async () => {
+      if (!keepServer) {
+        const { stopped, forced } = await server.stopAll()
+        const total = stopped.length + forced.length
+        if (total) log.info(`Stopped ${total} model server${total === 1 ? '' : 's'} on exit.`)
+      }
+      await ui.stop()
+      done()
+    })()
     // Backstop: whatever is holding the loop open, Ctrl-C must mean Ctrl-C.
-    setTimeout(() => process.exit(0), 2000).unref()
+    setTimeout(done, STOP_ALL_TIMEOUT_MS).unref()
   }
   process.on('SIGINT', shutdown)
   process.on('SIGTERM', shutdown)
@@ -371,12 +397,24 @@ async function main(): Promise<void> {
 
   switch (args.command) {
     case 'serve':
-      return serve(args.port)
+      return serve(args.port, args.keepServer)
 
     case 'start':
     case 'stop':
     case 'restart': {
       const server = new HeadlessServer(loadSettings())
+      if (args.command === 'stop' && args.all) {
+        const { stopped, forced } = await server.stopAll()
+        const total = stopped.length + forced.length
+        console.log(
+          total === 0
+            ? 'No mlx_lm.server processes were running.'
+            : `Stopped ${total} server${total === 1 ? '' : 's'}` +
+                (forced.length ? ` (${forced.length} needed SIGKILL)` : '') +
+                `: ${[...stopped, ...forced].join(', ')}`,
+        )
+        return
+      }
       const r = await server[args.command]()
       console.log(r.message)
       if (!r.ok) process.exitCode = 1

@@ -11,6 +11,7 @@ import {
   stripJsonComments,
 } from '../src/headless/settingsStore.ts'
 import { resolveVenv, venvCandidates, settingsCandidates } from '../src/headless/hostPaths.ts'
+import { parsePgrepPids } from '../src/headless/serverControl.ts'
 import { buildPlist, loadCommands, xmlEscape, LABEL } from '../src/headless/launchd.ts'
 import { parseArgs } from '../src/headless/args.ts'
 import {
@@ -347,4 +348,18 @@ test('the bundle is looked for in both shipped layouts', () => {
     '/x/bin/webview/main.js',
     '/x/dist/webview/main.js',
   ])
+})
+
+// ---- stopping everything ---------------------------------------------------
+
+test('pgrep output yields pids, never our own', () => {
+  assert.deepEqual(parsePgrepPids('4821\n4900\n', 999), [4821, 4900])
+
+  // Killing ourselves mid-shutdown would strand the very processes we are
+  // trying to clean up.
+  assert.deepEqual(parsePgrepPids('4821\n999\n4900\n', 999), [4821, 4900])
+
+  assert.deepEqual(parsePgrepPids('', 999), [], 'nothing running')
+  assert.deepEqual(parsePgrepPids('\n  \n', 999), [], 'blank lines are not pids')
+  assert.deepEqual(parsePgrepPids('not-a-pid\n7\n', 999), [7], 'junk is skipped')
 })

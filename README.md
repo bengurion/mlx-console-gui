@@ -303,6 +303,7 @@ dashboard needs is a process, a settings file and some `ioreg` / `vm_stat` outpu
 ```sh
 mlx-console serve                 # the dashboard, no VS Code
 mlx-console start | stop | restart
+mlx-console stop --all            # every server, including untracked orphans
 mlx-console status [--json]       # the terminal version of the metrics panel
 mlx-console models [--json]       # local models, scanned from your models directory
 mlx-console url                   # the tokenised dashboard link
@@ -365,8 +366,11 @@ the one genuinely new exposure here.
 
 > [!NOTE]
 > Closing VS Code does not unload your model. `mlx_lm.server` is spawned detached, in its own
-> process group, so it keeps serving after the window that started it closes — which also
-> means nothing frees that memory until you stop the server, from either front end.
+> process group, so it keeps serving after the window that started it closes — which is the
+> point, but it also means a crashed or force-quit window can leave one running with nothing
+> tracking it. `mlx-console stop --all`, or **MLX: Stop All Servers** in the palette, finds
+> those by process rather than by what was remembered. Quitting `mlx-console serve` stops
+> them for you; pass `--keep-server` if you would rather it did not.
 
 If you want inference with no editor and no dashboard at all, you do not need any of this:
 `mlx_lm.server --model <path-or-hf-id> --port 8080` is the whole requirement. What you give
