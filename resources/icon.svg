@@ -1,0 +1,20 @@
+<!-- Intrinsic size is 512 so renderers that do not scale-to-fit (qlmanage)
+     rasterise at full resolution; the PNG is downsampled to 128 for the
+     marketplace. Geometry stays on the 128-unit viewBox grid. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 128 128">
+  <!-- Marketplace icon. Unlike resources/activitybar.svg (which inherits
+       currentColor from the theme) this is standalone artwork: it needs its
+       own background and stroke colour to stay legible on both the light and
+       dark listing pages. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1f2937"/>
+      <stop offset="100%" stop-color="#0b1220"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="26" fill="url(#bg)"/>
+  <g fill="none" stroke="#7dd3fc" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="38" y="38" width="52" height="52" rx="9"/>
+    <path d="M54 14v16M78 14v16M54 98v16M78 98v16M14 54h16M14 78h16M98 54h16M98 78h16"/>
+  </g>
+</svg>

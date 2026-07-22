@@ -1,0 +1,421 @@
+import * as vscode from 'vscode'
+import { spawn, type ChildProcess } from 'node:child_process'
+import { log } from '../util/logger'
+import { Config } from '../config'
+import { mlxProcessEnv } from '../util/env'
+import type { EnvironmentManager } from './environmentManager'
+import { MlxClient } from './mlxClient'
+import {
+  isUsableState,
+  parseState,
+  pidAlive,
+  serializeState,
+  type SharedServerState,
+} from './serverRegistry'
+
+export type ServerState = 'stopped' | 'starting' | 'ready' | 'error'
+
+/**
+ * Residency of weights inside the server process.
+ *
+ * `mlx_lm.server` keeps exactly one model live (`ModelProvider.model`) and
+ * loads it lazily on the first request that names it. Loading happens inside
+ * that request, so a switch stalls the first response for as long as the
+ * weights take to read. There is no idle timeout or eviction: a model stays
+ * resident until a different one displaces it or the process exits.
+ */
+export type ModelState = 'none' | 'loading' | 'loaded'
+
+export interface ServerStatus {
+  state: ServerState
+  baseUrl: string
+  activeModel?: string
+  detail?: string
+  /** Whether weights are resident, being read, or absent. */
+  modelState: ModelState
+  /** The model the server actually has in memory (confirmed by a response). */
+  loadedModel?: string
+  /** Epoch ms when the current load started — drives the elapsed counter. */
+  loadStartedAt?: number
+  /** Epoch ms when the resident model finished loading. */
+  loadedAt?: number
+  /** Seconds the last load took, for "switching takes ~N s" messaging. */
+  lastLoadSeconds?: number
+}
+
+const READY_TIMEOUT_MS = 60_000
+const READY_POLL_MS = 500
+
+/** Spawns and supervises a single `mlx_lm.server` process and tracks its state. */
+export class ServerManager {
+  private proc: ChildProcess | undefined
+  private _state: ServerState = 'stopped'
+  private _activeModel: string | undefined
+  private _detail: string | undefined
+  private _modelState: ModelState = 'none'
+  private _loadedModel: string | undefined
+  private _loadStartedAt: number | undefined
+  private _loadedAt: number | undefined
+  private _lastLoadSeconds: number | undefined
+  /** PID of a server this window did not spawn, learned from shared state. */
+  private _externalPid: number | undefined
+  private stateFile: vscode.Uri | undefined
+  private readonly watcherSubs: vscode.Disposable[] = []
+  private startPromise: Promise<boolean> | undefined
+
+  private readonly _onDidChange = new vscode.EventEmitter<ServerStatus>()
+  readonly onDidChange = this._onDidChange.event
+
+  readonly client: MlxClient
+
+  constructor(private readonly env: EnvironmentManager) {
+    this.client = new MlxClient({
+      baseUrl: () => this.baseUrl(),
+      apiKey: () => Config.apiKey(),
+    })
+  }
+
+  get state(): ServerState {
+    return this._state
+  }
+
+  /** PID of the supervised server process, when we spawned it. */
+  get pid(): number | undefined {
+    return this.proc?.pid ?? this._externalPid
+  }
+
+  get activeModel(): string | undefined {
+    return this._activeModel
+  }
+
+  get status(): ServerStatus {
+    return {
+      state: this._state,
+      baseUrl: this.baseUrl(),
+      activeModel: this._activeModel,
+      detail: this._detail,
+      modelState: this._modelState,
+      loadedModel: this._loadedModel,
+      loadStartedAt: this._loadStartedAt,
+      loadedAt: this._loadedAt,
+      lastLoadSeconds: this._lastLoadSeconds,
+    }
+  }
+
+  /** The model currently resident in the server process, if any. */
+  get loadedModel(): string | undefined {
+    return this._loadedModel
+  }
+
+  get modelState(): ModelState {
+    return this._modelState
+  }
+
+  /**
+   * Call before a request is sent. If the target differs from what is resident,
+   * the server will swap models inside that request — surface it as `loading`
+   * so the UI can explain the stall instead of appearing hung.
+   */
+  beginModelUse(model: string): void {
+    this.setActiveModel(model)
+    if (this._loadedModel === model && this._modelState === 'loaded') return
+
+    if (this._loadedModel && this._loadedModel !== model) {
+      log.info(`Model switch: ${this._loadedModel} → ${model} (previous weights are dropped)`)
+    } else {
+      log.info(`Loading model ${model} into the server`)
+    }
+    this._modelState = 'loading'
+    this._loadStartedAt = Date.now()
+    this._loadedModel = undefined
+    this._loadedAt = undefined
+    this._onDidChange.fire(this.status)
+  }
+
+  /**
+   * Point this manager at the file used to share server state across windows.
+   * Adopts whatever is already recorded, then keeps watching for changes.
+   */
+  useSharedState(file: vscode.Uri): void {
+    this.stateFile = file
+    void this.adoptSharedState()
+
+    // Watching a path outside any workspace folder requires a RelativePattern;
+    // a bare glob string only matches inside open folders.
+    const watcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(vscode.Uri.joinPath(file, '..'), 'server-state.json'),
+    )
+    const onChange = () => void this.adoptSharedState()
+    this.watcherSubs.push(
+      watcher,
+      watcher.onDidChange(onChange),
+      watcher.onDidCreate(onChange),
+      watcher.onDidDelete(() => {
+        if (this.proc) return // we own it; our own state is authoritative
+        this._modelState = 'none'
+        this._loadedModel = undefined
+        this._onDidChange.fire(this.status)
+      }),
+    )
+  }
+
+  /** Take on the loaded-model state recorded by whichever window loaded it. */
+  private async adoptSharedState(): Promise<void> {
+    if (!this.stateFile || this.proc) return // owner's own state wins
+    let text: string
+    try {
+      text = new TextDecoder().decode(await vscode.workspace.fs.readFile(this.stateFile))
+    } catch {
+      return
+    }
+    const shared = parseState(text)
+    if (!isUsableState(shared, Config.serverPort(), pidAlive, Date.now())) return
+    if (!shared?.loadedModel) return
+    if (this._loadedModel === shared.loadedModel && this._modelState === 'loaded') return
+
+    this._loadedModel = shared.loadedModel
+    this._activeModel ??= shared.loadedModel
+    this._modelState = 'loaded'
+    this._loadedAt = shared.loadedAt
+    this._lastLoadSeconds = shared.lastLoadSeconds
+    this._externalPid = shared.pid
+    log.info(`Adopted shared server state: ${shared.loadedModel} is loaded (pid ${shared.pid})`)
+    this._onDidChange.fire(this.status)
+  }
+
+  /** Record our state so other windows can pick it up. */
+  private async publishSharedState(): Promise<void> {
+    if (!this.stateFile) return
+    const state: SharedServerState = {
+      pid: this.proc?.pid ?? this._externalPid,
+      port: Config.serverPort(),
+      loadedModel: this._loadedModel,
+      loadedAt: this._loadedAt,
+      lastLoadSeconds: this._lastLoadSeconds,
+      updatedAt: Date.now(),
+    }
+    try {
+      // Global storage is not created until something writes to it.
+      await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(this.stateFile, '..'))
+      await vscode.workspace.fs.writeFile(
+        this.stateFile,
+        new TextEncoder().encode(serializeState(state)),
+      )
+    } catch (err) {
+      log.warn(`Could not publish shared server state: ${String(err)}`)
+    }
+  }
+
+  /** Call on the first token of a response — proof the weights are resident. */
+  confirmModelLoaded(model: string): void {
+    if (this._modelState === 'loaded' && this._loadedModel === model) return
+    const started = this._loadStartedAt
+    this._lastLoadSeconds = started ? Math.round((Date.now() - started) / 100) / 10 : undefined
+    this._modelState = 'loaded'
+    this._loadedModel = model
+    this._loadedAt = Date.now()
+    this._loadStartedAt = undefined
+    log.info(
+      `Model ${model} resident${this._lastLoadSeconds !== undefined ? ` (loaded in ${this._lastLoadSeconds}s)` : ''}`,
+    )
+    this._onDidChange.fire(this.status)
+    void this.publishSharedState()
+  }
+
+  /** A load that never completed (error/cancel) must not look resident. */
+  abortModelLoad(): void {
+    if (this._modelState !== 'loading') return
+    this._modelState = this._loadedModel ? 'loaded' : 'none'
+    this._loadStartedAt = undefined
+    this._onDidChange.fire(this.status)
+  }
+
+  /** Base URL including the `/v1` suffix that clients POST to. */
+  baseUrl(): string {
+    return `http://${Config.clientHost()}:${Config.serverPort()}/v1`
+  }
+
+  /** The base URL to advertise to external tools (respects Expose to LAN). */
+  advertisedBaseUrl(): string {
+    const host = Config.exposeToLan() ? localIpOrHost() : Config.clientHost()
+    return `http://${host}:${Config.serverPort()}/v1`
+  }
+
+  private setState(state: ServerState, detail?: string) {
+    this._state = state
+    this._detail = detail
+    this._onDidChange.fire(this.status)
+  }
+
+  setActiveModel(model: string | undefined) {
+    this._activeModel = model
+    this._onDidChange.fire(this.status)
+  }
+
+  isRunning(): boolean {
+    return this._state === 'ready' || this._state === 'starting'
+  }
+
+  /** Ensure the environment is ready and the server is up; returns true when reachable. */
+  async ensureRunning(interactive = false): Promise<boolean> {
+    if (this._state === 'ready') return true
+    if (this.startPromise) return this.startPromise
+    this.startPromise = this.start(interactive).finally(() => {
+      this.startPromise = undefined
+    })
+    return this.startPromise
+  }
+
+  private async start(interactive: boolean): Promise<boolean> {
+    const ready = await this.env.ensureReady(interactive)
+    if (!ready) {
+      this.setState('error', 'Environment not ready')
+      return false
+    }
+
+    // If a server is already answering on this port (e.g. started externally), adopt it.
+    if (await this.client.ping()) {
+      this.setState('ready', 'Connected to existing server')
+      return true
+    }
+
+    this.setState('starting')
+    const bin = this.env.binPath('mlx_lm.server')
+    const args = [
+      '--host',
+      Config.bindHost(),
+      '--port',
+      String(Config.serverPort()),
+      '--log-level',
+      'INFO',
+    ]
+    // KV-cache budget: the practical ceiling on how much context stays cached.
+    const cacheSize = Config.promptCacheSize()
+    if (cacheSize > 0) args.push('--prompt-cache-size', String(cacheSize))
+    const cacheBytes = Config.promptCacheBytes()
+    if (cacheBytes > 0) args.push('--prompt-cache-bytes', String(cacheBytes))
+    // Concurrency and speculative decoding: each flag is omitted entirely when
+    // left at 0/'' so mlx_lm.server keeps its own defaults.
+    const decode = Config.decodeConcurrency()
+    if (decode > 0) args.push('--decode-concurrency', String(decode))
+    const prompts = Config.promptConcurrency()
+    if (prompts > 0) args.push('--prompt-concurrency', String(prompts))
+    const prefill = Config.prefillStepSize()
+    if (prefill > 0) args.push('--prefill-step-size', String(prefill))
+    const draft = Config.draftModel()
+    if (draft) {
+      args.push('--draft-model', draft)
+      const draftTokens = Config.numDraftTokens()
+      if (draftTokens > 0) args.push('--num-draft-tokens', String(draftTokens))
+    }
+    args.push(...Config.serverExtraArgs())
+    log.info(`Starting mlx_lm.server: ${bin} ${args.join(' ')}`)
+
+    try {
+      this.proc = spawn(bin, args, { env: mlxProcessEnv() })
+    } catch (err) {
+      log.error('Failed to spawn mlx_lm.server', err)
+      this.setState('error', String(err))
+      return false
+    }
+
+    this.proc.stdout?.on('data', (d) => log.info(`[server] ${d.toString().trimEnd()}`))
+    this.proc.stderr?.on('data', (d) => log.info(`[server] ${d.toString().trimEnd()}`))
+    this.proc.on('exit', (code, signal) => {
+      log.warn(`mlx_lm.server exited (code=${code}, signal=${signal})`)
+      this.proc = undefined
+      if (this._state !== 'stopped') {
+        this.setState('error', `Server exited (code ${code ?? signal})`)
+      }
+    })
+
+    const ok = await this.waitForReady()
+    if (ok) {
+      this.setState('ready')
+      log.info('mlx_lm.server ready')
+    } else {
+      this.setState('error', 'Server did not become ready in time')
+      this.stop()
+    }
+    return ok
+  }
+
+  private async waitForReady(): Promise<boolean> {
+    const deadline = Date.now() + READY_TIMEOUT_MS
+    while (Date.now() < deadline) {
+      if (!this.proc) return false // exited early
+      const controller = new AbortController()
+      const t = setTimeout(() => controller.abort(), READY_POLL_MS)
+      const ok = await this.client.ping(controller.signal)
+      clearTimeout(t)
+      if (ok) return true
+      await delay(READY_POLL_MS)
+    }
+    return false
+  }
+
+  /**
+   * Pre-warm a model so the first chat is fast. The server loads a model on the
+   * first request that references it; a tiny completion triggers that load.
+   */
+  async warmUp(model: string): Promise<boolean> {
+    if (!(await this.ensureRunning(false))) return false
+    try {
+      this.setActiveModel(model)
+      await this.client.chat({ model, messages: [{ role: 'user', content: 'ok' }], max_tokens: 1 })
+      return true
+    } catch (err) {
+      log.warn(`warmUp failed for ${model}`, err)
+      return false
+    }
+  }
+
+  stop() {
+    if (this.proc) {
+      log.info('Stopping mlx_lm.server')
+      this.proc.kill('SIGTERM')
+      this.proc = undefined
+    }
+    // Weights live in the server process, so stopping it frees everything.
+    this._modelState = 'none'
+    this._loadedModel = undefined
+    this._loadStartedAt = undefined
+    this._loadedAt = undefined
+    this._externalPid = undefined
+    this.setActiveModel(undefined)
+    this.setState('stopped')
+    void this.publishSharedState()
+  }
+
+  async restart(): Promise<boolean> {
+    this.stop()
+    await delay(300)
+    return this.ensureRunning(false)
+  }
+
+  dispose() {
+    for (const d of this.watcherSubs) d.dispose()
+    this.stop()
+    this._onDidChange.dispose()
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms))
+}
+
+function localIpOrHost(): string {
+  // Best-effort LAN address for display in external-client snippets.
+  try {
+    const os = require('node:os') as typeof import('node:os')
+    const nets = os.networkInterfaces()
+    for (const name of Object.keys(nets)) {
+      for (const net of nets[name] ?? []) {
+        if (net.family === 'IPv4' && !net.internal) return net.address
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return '0.0.0.0'
+}

@@ -1,0 +1,216 @@
+/**
+ * Pure helpers for estimating a model's memory footprint and whether it fits the
+ * machine. No VS Code / Node dependencies, so this is unit-testable directly.
+ */
+
+export type FitVerdict = 'fits' | 'tight' | 'too-large' | 'unknown'
+
+/** Bytes per element for the dtypes Hugging Face reports in `safetensors.parameters`. */
+export const DTYPE_BYTES: Record<string, number> = {
+  F64: 8,
+  I64: 8,
+  U64: 8,
+  F32: 4,
+  I32: 4,
+  U32: 4,
+  F16: 2,
+  BF16: 2,
+  I16: 2,
+  U16: 2,
+  F8_E4M3: 1,
+  F8_E5M2: 1,
+  I8: 1,
+  U8: 1,
+  BOOL: 1,
+}
+
+/** Headroom for KV cache, activations and framework overhead on top of weights. */
+export const RUNTIME_OVERHEAD = 1.15
+
+/** Extra allowance when estimating from parameter count (packing/scales are unknown). */
+const ESTIMATE_OVERHEAD = 1.2
+
+/**
+ * Exact weight bytes from HF's per-dtype element counts.
+ * MLX 4-bit models pack weights into U32, so counting elements x width is accurate.
+ */
+export function bytesFromSafetensors(parameters: Record<string, number> | undefined): number | undefined {
+  if (!parameters) return undefined
+  let total = 0
+  for (const [dtype, count] of Object.entries(parameters)) {
+    if (!Number.isFinite(count) || count <= 0) continue
+    total += count * (DTYPE_BYTES[dtype.toUpperCase()] ?? 2)
+  }
+  return total > 0 ? total : undefined
+}
+
+/**
+ * Parse a parameter count in billions out of a model id.
+ * Handles "7B", "120b", "0.6b" and mixture-of-experts "8x7B"; ignores "4bit"/"8bit".
+ */
+export function parseParamsB(id: string): number | undefined {
+  const s = id.toLowerCase()
+  const moe = s.match(/(\d+)\s*x\s*(\d+(?:\.\d+)?)\s*b(?!it)/)
+  if (moe) {
+    const n = parseInt(moe[1], 10) * parseFloat(moe[2])
+    if (n > 0 && n < 5000) return n
+  }
+  const matches = [...s.matchAll(/(\d+(?:\.\d+)?)\s*b(?!it)/g)]
+    .map((m) => parseFloat(m[1]))
+    .filter((n) => n > 0 && n < 5000)
+  return matches.length ? Math.max(...matches) : undefined
+}
+
+/** Bytes per parameter implied by a quantization label. */
+export function bytesPerParam(quant?: string): number {
+  switch ((quant ?? '').toLowerCase()) {
+    case '2bit':
+      return 0.25
+    case '3bit':
+      return 0.375
+    case '4bit':
+      return 0.5
+    case '6bit':
+      return 0.75
+    case '8bit':
+      return 1
+    case 'bf16':
+    case 'fp16':
+      return 2
+    default:
+      return 2
+  }
+}
+
+/** Rough weight-size estimate when exact dtype counts are unavailable. */
+export function estimateBytes(id: string, quant?: string): number | undefined {
+  const paramsB = parseParamsB(id)
+  if (paramsB === undefined) return undefined
+  return paramsB * 1e9 * bytesPerParam(quant) * ESTIMATE_OVERHEAD
+}
+
+/** Memory a model needs at runtime, given its weight bytes. */
+export function runtimeBytes(weightBytes: number): number {
+  return weightBytes * RUNTIME_OVERHEAD
+}
+
+/**
+ * Verdict against a memory budget.
+ * `fits` under 70% of budget, `tight` up to the budget, `too-large` beyond it.
+ */
+export function fitVerdict(weightBytes: number | undefined, budgetBytes: number): FitVerdict {
+  if (!weightBytes || !budgetBytes) return 'unknown'
+  const needed = runtimeBytes(weightBytes)
+  if (needed <= budgetBytes * 0.7) return 'fits'
+  if (needed <= budgetBytes) return 'tight'
+  return 'too-large'
+}
+
+export function formatBytes(n: number): string {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let v = n
+  let i = 0
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024
+    i++
+  }
+  return `${v.toFixed(v < 10 && i > 0 ? 1 : 0)} ${units[i]}`
+}
+
+/**
+ * How a candidate size lands against the machine, in more detail than `FitVerdict`.
+ * `over-budget` is the interesting middle ground: too big for the budget we keep
+ * free for the OS and other apps, but still under physical memory — it will load
+ * if the machine is otherwise idle.
+ */
+export type ConvertFit = 'fits' | 'tight' | 'over-budget' | 'too-large'
+
+/** Why a candidate size does or does not work, phrased for the convert picker. */
+export function explainFit(
+  weightBytes: number,
+  budgetBytes: number,
+  totalRamBytes: number,
+): { verdict: ConvertFit; summary: string; detail: string } {
+  const needed = runtimeBytes(weightBytes)
+  const at = `≈ ${formatBytes(weightBytes)} on disk, ${formatBytes(needed)} in memory once loaded`
+
+  if (needed <= budgetBytes * 0.7)
+    return {
+      verdict: 'fits',
+      summary: 'fits comfortably',
+      detail: `${at} — well inside the ${formatBytes(budgetBytes)} usable budget.`,
+    }
+  if (needed <= budgetBytes)
+    return {
+      verdict: 'tight',
+      summary: 'tight',
+      detail: `${at} — inside the ${formatBytes(budgetBytes)} usable budget, but with little room for a long context.`,
+    }
+  if (needed <= totalRamBytes)
+    return {
+      verdict: 'over-budget',
+      summary: 'over budget — will only load on an idle machine',
+      detail:
+        `${at}. That is past the ${formatBytes(budgetBytes)} we keep usable, but still under this machine's ` +
+        `${formatBytes(totalRamBytes)} of unified memory, so it can technically load — you would need to quit other apps, ` +
+        `raise the GPU wired-memory limit (sudo sysctl iogpu.wired_limit_mb), and expect swapping under load.`,
+    }
+  return {
+    verdict: 'too-large',
+    summary: 'too large',
+    detail: `${at} — more than this machine's ${formatBytes(totalRamBytes)} of unified memory. It cannot load.`,
+  }
+}
+
+/**
+ * GGUF is llama.cpp's format. `mx.load` can read gguf tensors, but mlx-lm has no
+ * pipeline that maps gguf metadata/tokenizer onto a runnable model, and
+ * `mlx_lm.convert` only accepts HF-format inputs — so gguf repos are not usable.
+ */
+export function isGguf(id: string, tags: string[] = []): boolean {
+  return /gguf/i.test(id) || tags.some((t) => t.toLowerCase() === 'gguf')
+}
+
+export type ModelFormat = 'mlx' | 'convertible' | 'unsupported'
+
+/**
+ * What we can do with a repo:
+ *  - `mlx`         already MLX — download and run directly
+ *  - `convertible` ships safetensors — `mlx_lm.convert` can turn it into MLX
+ *  - `unsupported` GGUF, or no safetensors (mlx-lm globs `model*.safetensors`
+ *                  and fails with "No safetensors found")
+ */
+export function classifyFormat(
+  id: string,
+  tags: string[] = [],
+  libraryName?: string,
+): ModelFormat {
+  const lower = tags.map((t) => t.toLowerCase())
+  if (libraryName?.toLowerCase() === 'mlx' || lower.includes('mlx')) return 'mlx'
+  if (isGguf(id, tags)) return 'unsupported'
+  if (lower.includes('safetensors')) return 'convertible'
+  return 'unsupported'
+}
+
+/** Bit widths `mlx_lm.convert --q-bits` accepts, highest quality first. */
+export const CONVERT_BITS = [8, 6, 4, 3, 2]
+
+/** Estimated weight bytes if a model were quantized to `bits`. */
+export function bytesForBits(paramsB: number, bits: number): number {
+  return paramsB * 1e9 * (bits / 8) * ESTIMATE_OVERHEAD
+}
+
+/**
+ * Highest quantization that comfortably fits the machine's memory budget.
+ * Returns undefined when even 2-bit would not fit.
+ */
+export function chooseQuantBits(
+  paramsB: number | undefined,
+  budgetBytes: number,
+): number | undefined {
+  if (!paramsB || !budgetBytes) return undefined
+  for (const bits of CONVERT_BITS) {
+    if (runtimeBytes(bytesForBits(paramsB, bits)) <= budgetBytes * 0.7) return bits
+  }
+  return undefined
+}

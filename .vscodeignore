@@ -1,0 +1,22 @@
+# Downloaded model weights (the default modelsDir sits in the workspace).
+**/*.map
+**/*.mts
+**/*.pyc
+**/*.ts
+**/*.vsix
+**/__pycache__/**
+.claude/**
+.github/**
+.gitignore
+.venv/**
+.vscode/**
+docs/**
+esbuild.mjs
+models/**
+node_modules/**
+scripts/**
+src/**
+test/**
+tsconfig.json
+venv/**
+webview/**

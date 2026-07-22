@@ -1,0 +1,404 @@
+{
+  "name": "mlx-console-vscode",
+  "displayName": "MLX Console VSCode",
+  "description": "Run and manage mlx-lm's local OpenAI-compatible server on Apple Silicon: download, convert and serve MLX models, watch GPU and memory use, and connect any OpenAI-compatible client, including VS Code chat.",
+  "version": "0.0.17",
+  "publisher": "mlx-console",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bengurion/mlx_console_vscode.git"
+  },
+  "bugs": {
+    "url": "https://github.com/bengurion/mlx_console_vscode/issues"
+  },
+  "homepage": "https://github.com/bengurion/mlx_console_vscode#readme",
+  "icon": "resources/icon.png",
+  "engines": {
+    "vscode": "^1.125.0",
+    "node": ">=18"
+  },
+  "categories": [
+    "Machine Learning",
+    "AI",
+    "Other"
+  ],
+  "keywords": [
+    "mlx",
+    "mlx-lm",
+    "apple silicon",
+    "local llm",
+    "openai-compatible",
+    "inference server",
+    "model manager"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "mlxConsole",
+          "title": "MLX Console",
+          "icon": "resources/activitybar.svg"
+        }
+      ]
+    },
+    "views": {
+      "mlxConsole": [
+        {
+          "type": "webview",
+          "id": "mlxConsole.search",
+          "name": "Search"
+        },
+        {
+          "type": "webview",
+          "id": "mlxConsole.models",
+          "name": "Models"
+        },
+        {
+          "type": "webview",
+          "id": "mlxConsole.downloads",
+          "name": "Downloads"
+        },
+        {
+          "type": "webview",
+          "id": "mlxConsole.server",
+          "name": "Server & Settings"
+        }
+      ]
+    },
+    "languageModelChatProviders": [
+      {
+        "vendor": "mlx",
+        "displayName": "MLX (local)",
+        "managementCommand": "mlxConsole.manageModels"
+      }
+    ],
+    "chatParticipants": [
+      {
+        "id": "mlx-console-vscode.mlx",
+        "name": "mlx",
+        "fullName": "MLX",
+        "description": "Chat with a model served locally by mlx-lm",
+        "isSticky": true,
+        "commands": [
+          {
+            "name": "explain",
+            "description": "Explain the selected code"
+          },
+          {
+            "name": "fix",
+            "description": "Propose a fix for the selected code"
+          },
+          {
+            "name": "review",
+            "description": "Review the current file or selection"
+          },
+          {
+            "name": "test",
+            "description": "Generate tests for the selection"
+          },
+          {
+            "name": "doc",
+            "description": "Write documentation for the selection"
+          }
+        ]
+      }
+    ],
+    "languageModelTools": [
+      {
+        "name": "mlx_modelInfo",
+        "displayName": "MLX Model Info",
+        "modelDescription": "Report the current MLX server state, the active model, and the locally available MLX models.",
+        "toolReferenceName": "mlxModelInfo",
+        "canBeReferencedInPrompt": true,
+        "tags": [
+          "mlx"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false
+        }
+      }
+    ],
+    "commands": [
+      {
+        "command": "mlxConsole.setup",
+        "title": "Run Setup (Python env + mlx-lm)",
+        "category": "MLX"
+      },
+      {
+        "command": "mlxConsole.startServer",
+        "title": "Start Server",
+        "category": "MLX"
+      },
+      {
+        "command": "mlxConsole.stopServer",
+        "title": "Stop Server",
+        "category": "MLX"
+      },
+      {
+        "command": "mlxConsole.restartServer",
+        "title": "Restart Server",
+        "category": "MLX"
+      },
+      {
+        "command": "mlxConsole.testCompletion",
+        "title": "Test Completion (dev)",
+        "category": "MLX"
+      },
+      {
+        "command": "mlxConsole.openSearch",
+        "title": "Search Hugging Face Models",
+        "category": "MLX"
+      },
+      {
+        "command": "mlxConsole.manageModels",
+        "title": "Manage Models",
+        "category": "MLX"
+      },
+      {
+        "command": "mlxConsole.convertModel",
+        "title": "Convert Model to MLX (fit to machine)",
+        "category": "MLX"
+      },
+      {
+        "command": "mlxConsole.reviewFile",
+        "title": "Review Current File",
+        "category": "MLX"
+      },
+      {
+        "command": "mlxConsole.reviewDiff",
+        "title": "Review Git Diff",
+        "category": "MLX"
+      },
+      {
+        "command": "mlxConsole.explainSelection",
+        "title": "Explain Selection",
+        "category": "MLX"
+      },
+      {
+        "command": "mlxConsole.showLogs",
+        "title": "Show Logs",
+        "category": "MLX"
+      },
+      {
+        "command": "mlxConsole.showMenu",
+        "title": "Show Menu",
+        "category": "MLX"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "mlxConsole.explainSelection",
+          "when": "editorHasSelection",
+          "group": "mlx@1"
+        },
+        {
+          "command": "mlxConsole.reviewFile",
+          "when": "editorTextFocus",
+          "group": "mlx@2"
+        }
+      ],
+      "scm/title": [
+        {
+          "command": "mlxConsole.reviewDiff",
+          "when": "scmProvider == git",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "MLX Console",
+      "properties": {
+        "mlxConsole.pythonPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to a Python 3 interpreter used to create the managed virtual environment. Leave empty to auto-detect."
+        },
+        "mlxConsole.venvPath": {
+          "type": "string",
+          "default": "",
+          "description": "Directory for the managed Python virtual environment where mlx-lm is installed. Leave empty to prefer a workspace .venv (if it has mlx-lm) or the extension's global storage."
+        },
+        "mlxConsole.modelsDir": {
+          "type": "string",
+          "default": "",
+          "description": "Directory where models are downloaded and cached (sets HF_HOME; models live under <dir>/hub). Shared with mlx_lm.server and the Hugging Face CLI. Leave empty for the default (~/.cache/huggingface)."
+        },
+        "mlxConsole.server.host": {
+          "type": "string",
+          "default": "127.0.0.1",
+          "description": "Host the mlx_lm.server binds to (ignored when Expose to LAN is on)."
+        },
+        "mlxConsole.server.port": {
+          "type": "number",
+          "default": 8080,
+          "description": "Port for mlx_lm.server."
+        },
+        "mlxConsole.server.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start the server automatically when it is first needed."
+        },
+        "mlxConsole.server.exposeToLan": {
+          "type": "boolean",
+          "default": false,
+          "description": "Bind the server to 0.0.0.0 so other machines/tools can reach it. Security risk on untrusted networks."
+        },
+        "mlxConsole.server.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Optional bearer token required for served requests (also shown in external-client snippets)."
+        },
+        "mlxConsole.server.extraArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Extra command-line arguments passed to mlx_lm.server for machine-specific tuning (e.g. context/KV-cache limits, chat template). Run `mlx_lm.server --help` to see available flags."
+        },
+        "mlxConsole.defaultModel": {
+          "type": "string",
+          "default": "",
+          "description": "Default MLX model repo id used for chat when none is selected."
+        },
+        "mlxConsole.huggingFace.token": {
+          "type": "string",
+          "default": "",
+          "description": "Optional Hugging Face token for higher rate limits and gated models."
+        },
+        "mlxConsole.server.promptCacheSize": {
+          "type": "number",
+          "default": 0,
+          "description": "Maximum number of distinct KV caches held in the prompt cache (mlx_lm.server --prompt-cache-size). 0 uses the server default."
+        },
+        "mlxConsole.server.promptCacheBytes": {
+          "type": "number",
+          "default": 0,
+          "markdownDescription": "Maximum size of the KV/prompt caches (`mlx_lm.server --prompt-cache-bytes`). Accepts a size such as `8 GB` or `512 MB`; a bare number is read as MB. **Unbounded by default** — the server then trims only by entry count, so long conversations can grow into whatever the model leaves free. See the live recommendation in Metrics. 0 leaves the server default."
+        },
+        "mlxConsole.server.decodeConcurrency": {
+          "type": "number",
+          "default": 0,
+          "markdownDescription": "Sequences decoded in parallel (`mlx_lm.server --decode-concurrency`). **Each parallel sequence holds its own KV cache**, so this multiplies memory: at a 131072-token window and ~72 KiB/token, one sequence is ~9.7 GB. The server default is **32**, sized for a shared inference host — a single-user editor rarely needs more than 1–4. 0 leaves the server default."
+        },
+        "mlxConsole.server.promptConcurrency": {
+          "type": "number",
+          "default": 0,
+          "markdownDescription": "Prompts prefilled in parallel (`mlx_lm.server --prompt-concurrency`). Server default **8**. Raises prefill throughput for concurrent requests at the cost of transient memory. 0 leaves the server default."
+        },
+        "mlxConsole.server.prefillStepSize": {
+          "type": "number",
+          "default": 0,
+          "markdownDescription": "Tokens per prefill step (`mlx_lm.server --prefill-step-size`). Server default **2048**. Larger steps prefill faster but need more transient memory; lower it if long prompts cause pressure. 0 leaves the server default."
+        },
+        "mlxConsole.server.draftModel": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Small model used for speculative decoding (`mlx_lm.server --draft-model`). Loaded **in addition** to the main model, so its weights count against the same GPU ceiling — check headroom in Metrics first. Empty disables speculation."
+        },
+        "mlxConsole.server.numDraftTokens": {
+          "type": "number",
+          "default": 0,
+          "markdownDescription": "Tokens proposed per speculation step (`mlx_lm.server --num-draft-tokens`). Server default **3**. Only used when a draft model is set. 0 leaves the server default."
+        },
+        "mlxConsole.contextWindow": {
+          "type": "number",
+          "default": 131072,
+          "markdownDescription": "Context window advertised to VS Code for MLX models (`maxInputTokens`). **Leave unset to read each model's real window from its own `config.json`** (`max_position_embeddings`); setting a value here overrides that for every model. VS Code uses this to decide how much history **and how many tool definitions** to send in agent mode — a large native + MCP tool set can need 32k on its own."
+        },
+        "mlxConsole.maxOutputTokens": {
+          "type": "number",
+          "default": 4096,
+          "description": "Maximum tokens an MLX model may generate in one response."
+        },
+        "mlxConsole.sampling.temperature": {
+          "type": "number",
+          "default": 0.7,
+          "description": "Sampling temperature. Lower is more deterministic (good for code)."
+        },
+        "mlxConsole.sampling.topP": {
+          "type": "number",
+          "default": 1,
+          "description": "Nucleus sampling top-p. 1.0 disables it."
+        },
+        "mlxConsole.sampling.topK": {
+          "type": "number",
+          "default": 0,
+          "description": "Top-k sampling. 0 disables it."
+        },
+        "mlxConsole.sampling.minP": {
+          "type": "number",
+          "default": 0,
+          "description": "Min-p sampling. 0 disables it."
+        },
+        "mlxConsole.sampling.repetitionPenalty": {
+          "type": "number",
+          "default": 1,
+          "description": "Repetition penalty. 1.0 disables it."
+        },
+        "mlxConsole.sampling.maxTokens": {
+          "type": "number",
+          "default": 2048,
+          "description": "Maximum tokens generated per response."
+        },
+        "mlxConsole.modelOverrides": {
+          "type": "object",
+          "default": {},
+          "markdownDescription": "Per-model generation overrides, keyed by model id (or a converted model's local path). Any omitted field falls back to the `mlxConsole.sampling.*` defaults.\n\n```json\n{\n  \"mlx-community/Qwen2.5-Coder-7B-Instruct-4bit\": { \"temperature\": 0.2, \"maxTokens\": 4096 }\n}\n```",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "temperature": {
+                "type": "number"
+              },
+              "topP": {
+                "type": "number"
+              },
+              "topK": {
+                "type": "number"
+              },
+              "minP": {
+                "type": "number"
+              },
+              "repetitionPenalty": {
+                "type": "number"
+              },
+              "maxTokens": {
+                "type": "number"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "package": "node esbuild.mjs --production",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.mts",
+    "vsce:package": "npm run sync:readme && npm run package && vsce package --no-dependencies",
+    "sync:readme": "node scripts/sync-readme-version.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@types/vscode": "1.125.0",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.28.1",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "typescript": "^7.0.2"
+  }
+}
