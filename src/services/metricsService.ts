@@ -228,7 +228,7 @@ export class MetricsService implements Disposable {
     error?: string
     needsAuth?: boolean
   }> {
-    const outFile = path.join(os.tmpdir(), `mlx-console-vscode-powermetrics-${process.pid}.txt`)
+    const outFile = path.join(os.tmpdir(), `mlx-console-powermetrics-${process.pid}.txt`)
     const args = powermetricsArgs(outFile)
 
     try {

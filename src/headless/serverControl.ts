@@ -11,7 +11,7 @@ import * as os from 'node:os'
 import { spawn } from 'node:child_process'
 import { buildServerArgs } from '../backend/serverArgs'
 import { isUsableState, parseState, pidAlive, type SharedServerState } from '../backend/serverRegistry'
-import { resolveVenv, venvBin, venvCandidates, userDirs, EXTENSION_ID } from './hostPaths'
+import { resolveVenv, venvBin, venvCandidates, userDirs, STORAGE_IDS } from './hostPaths'
 import type { SettingsStore } from './settingsStore'
 
 /** How long a SIGTERM gets before SIGKILL. Matches the extension. */
@@ -28,8 +28,8 @@ export interface HeadlessStatus {
 
 /** The extension writes its shared state here; the CLI reads the same file. */
 export function stateFileCandidates(home = os.homedir()): string[] {
-  return userDirs(home).map((d) =>
-    path.join(d, 'globalStorage', EXTENSION_ID, 'server-state.json'),
+  return userDirs(home).flatMap((d) =>
+    STORAGE_IDS.map((id) => path.join(d, 'globalStorage', id, 'server-state.json')),
   )
 }
 

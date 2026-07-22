@@ -14,6 +14,7 @@ import { resolveVenv, venvCandidates, settingsCandidates } from '../src/headless
 import { buildPlist, loadCommands, xmlEscape, LABEL } from '../src/headless/launchd.ts'
 import { parseArgs } from '../src/headless/args.ts'
 import { findHelper, lastJsonLine, pythonError } from '../src/headless/pythonBridge.ts'
+import { migrateStorage, planMigration } from '../src/core/storageMigration.ts'
 
 // ---- server arguments ------------------------------------------------------
 
@@ -211,4 +212,95 @@ test('a traceback is reported by its last line, not the whole dump', () => {
   ].join('\n')
   assert.equal(pythonError(trace, 1).message, 'huggingface_hub.errors.CacheNotFound: cache not found')
   assert.equal(pythonError('', 2).message, 'helper exited with code 2')
+})
+
+// ---- surviving the rename --------------------------------------------------
+
+test('storage moves only into an empty destination', () => {
+  const withVenv = new Set(['/new/mlx-console.mlx-console-gui', '/old/legacy'])
+
+  // Nothing to do when the new location is already set up.
+  assert.equal(
+    planMigration({
+      storageDir: '/new/mlx-console.mlx-console-gui',
+      legacyDirs: ['/old/legacy'],
+      hasVenv: (d) => withVenv.has(d),
+    }),
+    undefined,
+    'an existing install must not be overwritten by an older one',
+  )
+
+  assert.deepEqual(
+    planMigration({
+      storageDir: '/fresh',
+      legacyDirs: ['/no-venv', '/old/legacy'],
+      hasVenv: (d) => withVenv.has(d),
+    }),
+    { from: '/old/legacy', to: '/fresh' },
+  )
+
+  assert.equal(
+    planMigration({ storageDir: '/fresh', legacyDirs: ['/nothing'], hasVenv: () => false }),
+    undefined,
+    'no venv anywhere means nothing worth moving',
+  )
+})
+
+test('migration moves entries and never clobbers what is already there', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mlx-migrate-'))
+  const from = path.join(root, 'old')
+  const to = path.join(root, 'new')
+  fs.mkdirSync(path.join(from, 'venv', 'bin'), { recursive: true })
+  fs.writeFileSync(path.join(from, 'venv', 'bin', 'python'), '#!/bin/sh\n')
+  fs.writeFileSync(path.join(from, 'server-state.json'), '{"port":8080,"updatedAt":0}')
+  fs.mkdirSync(to, { recursive: true })
+  fs.writeFileSync(path.join(to, 'server-state.json'), '{"port":9999,"updatedAt":1}')
+
+  const result = migrateStorage({ from, to })
+  assert.deepEqual(result.moved, ['venv'], 'only what the destination lacked')
+  assert.equal(result.error, undefined)
+  assert.ok(fs.existsSync(path.join(to, 'venv', 'bin', 'python')), 'the venv came across')
+  assert.equal(
+    fs.readFileSync(path.join(to, 'server-state.json'), 'utf8'),
+    '{"port":9999,"updatedAt":1}',
+    'the newer state file was left alone',
+  )
+  assert.ok(fs.existsSync(path.join(from, 'server-state.json')), 'unmoved files are not deleted')
+
+  // Running again is a no-op: the venv is gone from the old location.
+  assert.equal(
+    planMigration({
+      storageDir: to,
+      legacyDirs: [from],
+      hasVenv: (d) => fs.existsSync(path.join(d, 'venv')),
+    }),
+    undefined,
+  )
+  fs.rmSync(root, { recursive: true, force: true })
+})
+
+test('a failed move reports the old venv rather than destroying anything', () => {
+  const result = migrateStorage(
+    { from: '/does/not/exist', to: '/also/not' },
+    {
+      mkdirSync: () => undefined,
+      readdirSync: () => {
+        throw new Error('EACCES')
+      },
+    } as never,
+  )
+  assert.deepEqual(result.moved, [])
+  assert.equal(result.fallbackVenv, '/does/not/exist/venv')
+  assert.match(result.error ?? '', /EACCES/)
+})
+
+test('both the current and previous storage ids are searched', () => {
+  const dirs = venvCandidates('/home/me')
+  assert.ok(dirs.some((d) => d.includes('mlx-console.mlx-console-gui')), 'current id')
+  assert.ok(dirs.some((d) => d.includes('mlx-console.mlx-console-vscode')), 'previous id')
+  assert.ok(
+    dirs.indexOf(dirs.find((d) => d.includes('gui'))!) <
+      dirs.indexOf(dirs.find((d) => d.includes('vscode'))!),
+    'the current id is preferred',
+  )
 })

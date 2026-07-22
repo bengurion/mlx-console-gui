@@ -9,7 +9,7 @@ const MAX_ATTACHMENT_CHARS = 32_000
 
 /** Registers the `@mlx` chat participant that drives the user-selected model. */
 export function registerParticipant(context: vscode.ExtensionContext): vscode.Disposable {
-  const participant = vscode.chat.createChatParticipant('mlx-console-vscode.mlx', handler)
+  const participant = vscode.chat.createChatParticipant('mlx-console-gui.mlx', handler)
   participant.iconPath = new vscode.ThemeIcon('chip')
   context.subscriptions.push(participant)
   return participant

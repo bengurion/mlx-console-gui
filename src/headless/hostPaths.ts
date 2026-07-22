@@ -10,7 +10,19 @@
 import * as path from 'node:path'
 import * as os from 'node:os'
 
-export const EXTENSION_ID = 'mlx-console.mlx-console-vscode'
+export const EXTENSION_ID = 'mlx-console.mlx-console-gui'
+
+/**
+ * Directory names used before the rename.
+ *
+ * The daemon looks in these too: a user who has not reinstalled the extension
+ * still has their venv and registry file under the old id, and finding them
+ * matters more than tidiness.
+ */
+export const LEGACY_EXTENSION_IDS = ['mlx-console.mlx-console-vscode']
+
+/** Every storage id to search, current first. */
+export const STORAGE_IDS = [EXTENSION_ID, ...LEGACY_EXTENSION_IDS]
 
 /** User-data directory names, most-preferred first. */
 export const EDITOR_DIRS = ['Code', 'Cursor', 'Code - Insiders', 'VSCodium']
@@ -27,7 +39,9 @@ export function settingsCandidates(home = os.homedir()): string[] {
 
 /** The extension's globalStorage, which is where the managed venv lives. */
 export function venvCandidates(home = os.homedir()): string[] {
-  return userDirs(home).map((d) => path.join(d, 'globalStorage', EXTENSION_ID, 'venv'))
+  return userDirs(home).flatMap((d) =>
+    STORAGE_IDS.map((id) => path.join(d, 'globalStorage', id, 'venv')),
+  )
 }
 
 /**

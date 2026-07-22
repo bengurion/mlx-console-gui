@@ -2,6 +2,8 @@ import * as vscode from 'vscode'
 import { initLogger, log } from './util/logger'
 import { setSettingsSource } from './core/settings'
 import { VsCodeSettings, vscodeElevate, vscodeEnvHost, vscodeHubHost } from './ui/vscodeHost'
+import { LEGACY_STORAGE_IDS, migrateStorage, planMigration } from './core/storageMigration'
+import * as fs from 'node:fs'
 import { Config } from './config'
 import * as path from 'node:path'
 import { EnvironmentManager } from './backend/environmentManager'
@@ -21,12 +23,46 @@ import { MetricsService } from './services/metricsService'
 import { WebUiServer } from './services/webUiServer'
 import { ReviewService } from './features/reviewService'
 
+/**
+ * Bring the previous name's storage with us.
+ *
+ * VSCode derives globalStorage from `publisher.name`, so renaming the
+ * extension would otherwise strand a few hundred megabytes of virtualenv and
+ * the file that records which server is running. Runs once: after the move the
+ * legacy directory has no venv, so the plan comes back empty.
+ */
+function carryStorageAcrossRename(context: vscode.ExtensionContext): void {
+  const storageDir = context.globalStorageUri.fsPath
+  const legacyDirs = LEGACY_STORAGE_IDS.map((id) =>
+    path.join(path.dirname(storageDir), id),
+  )
+  const plan = planMigration({
+    storageDir,
+    legacyDirs,
+    hasVenv: (dir) => fs.existsSync(path.join(dir, 'venv')),
+  })
+  if (!plan) return
+
+  log.info(`Migrating storage from ${plan.from}`)
+  const result = migrateStorage(plan)
+  if (result.fallbackVenv) {
+    // Could not move it — use it where it lies rather than reinstalling.
+    log.warn(`Storage migration failed (${result.error}); using ${result.fallbackVenv} in place`)
+    void vscode.workspace
+      .getConfiguration('mlxConsole')
+      .update('venvPath', result.fallbackVenv, vscode.ConfigurationTarget.Global)
+    return
+  }
+  log.info(`Migrated ${result.moved.length} item(s) from the previous install`)
+}
+
 export async function activate(context: vscode.ExtensionContext) {
   initLogger()
   // Install the editor's answers to what the core asks for, before anything
   // reads a setting.
   setSettingsSource(new VsCodeSettings())
   log.info('MLX Console activating')
+  carryStorageAcrossRename(context)
 
   const env = new EnvironmentManager(vscodeEnvHost(context))
   const server = new ServerManager(env)

@@ -1,7 +1,7 @@
 {
-  "name": "mlx-console-vscode",
-  "displayName": "MLX Console VSCode",
-  "description": "Run and manage mlx-lm's local OpenAI-compatible server on Apple Silicon: download, convert and serve MLX models, watch GPU and memory use, and connect any OpenAI-compatible client, including VS Code chat.",
+  "name": "mlx-console-gui",
+  "displayName": "MLX Console GUI",
+  "description": "Run and manage mlx-lm on Apple Silicon: download, convert and serve MLX models, watch GPU and memory use, and drive it from VS Code, a browser, or a headless daemon.",
   "version": "0.0.17",
   "publisher": "mlx-console",
   "author": {
@@ -78,7 +78,7 @@
     ],
     "chatParticipants": [
       {
-        "id": "mlx-console-vscode.mlx",
+        "id": "mlx-console-gui.mlx",
         "name": "mlx",
         "fullName": "MLX",
         "description": "Chat with a model served locally by mlx-lm",

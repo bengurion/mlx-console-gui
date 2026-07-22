@@ -20,7 +20,7 @@ import { log } from '../core/logging'
 import type { SettingsSource } from '../core/settings'
 import type { EnvHost } from '../backend/environmentManager'
 import type { HubHost } from '../ui/webview/webviewHub'
-import { EXTENSION_ID, userDirs } from './hostPaths'
+import { STORAGE_IDS, userDirs } from './hostPaths'
 import type { SettingsStore } from './settingsStore'
 
 /** The CLI's config file, presented as a settings source. */
@@ -52,8 +52,8 @@ export class StoreSettings implements SettingsSource {
  */
 export function storageDir(home = os.homedir()): string {
   const shared = userDirs(home)
-    .map((d) => path.join(d, 'globalStorage', EXTENSION_ID))
-    .find((d) => fs.existsSync(d))
+    .flatMap((d) => STORAGE_IDS.map((id) => path.join(d, 'globalStorage', id)))
+    .find((d) => fs.existsSync(path.join(d, 'venv')))
   return shared ?? path.join(home, '.mlx-console', 'storage')
 }
 

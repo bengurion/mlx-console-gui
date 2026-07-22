@@ -17,7 +17,7 @@ another for `huggingface-cli`, a browser tab open on the Hub trying to work out 
 
 The same core ships two ways. Pick either, or run both — they cooperate rather than compete.
 
-| | **VS Code extension** (`.vsix`) | **Headless CLI** (`mlx-console`) |
+| | **VS Code extension** (`.vsix`) | **Headless daemon** (`mlx-console`) |
 | --- | --- | --- |
 | **You get** | Activity-bar panels + the chat provider and `@mlx` participant | The same UI in a browser, plus terminal commands |
 | **Needs** | VS Code 1.125+ running | Nothing but Node and a venv with mlx-lm |
@@ -160,10 +160,10 @@ No marketplace release yet — coming soon. Until then, build it from source:
 
 ```bash
 git clone <this-repo>
-cd mlx_console_vscode
+cd mlx_console_gui
 npm install
 npm run vsce:package
-code --install-extension "$(ls -t mlx-console-vscode-*.vsix | head -1)" --force
+code --install-extension "$(ls -t mlx-console-gui-*.vsix | head -1)" --force
 ```
 
 Reload the window afterwards, then open the **MLX Console** icon in the activity bar. First
@@ -178,7 +178,7 @@ the app bundle:
 
 ```bash
 "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" \
-  --install-extension mlx-console-vscode-0.0.17.vsix --force
+  --install-extension mlx-console-gui-0.0.17.vsix --force
 ```
 
 </details>
@@ -195,7 +195,7 @@ npm link           # provides `mlx-console`
 Otherwise alias the copy inside the installed extension:
 
 ```bash
-alias mlx-console='node ~/.vscode/extensions/mlx-console.mlx-console-vscode-*/dist/cli.js'
+alias mlx-console='node ~/.vscode/extensions/mlx-console.mlx-console-gui-*/dist/cli.js'
 ```
 
 It finds the environment the extension already built — including Cursor's and VSCodium's,
@@ -307,7 +307,7 @@ $ mlx-console status
 server:  ready (pid 4821) on port 8080
 model:   mlx-community/gpt-oss-120b-4bit
 memory:  62.1 GB held by the server
-venv:    …/globalStorage/mlx-console.mlx-console-vscode/venv
+venv:    …/globalStorage/mlx-console.mlx-console-gui/venv
 
 $ mlx-console models
 *    76.9 GB  lmstudio-community/gpt-oss-120b-MLX-8bit
@@ -429,7 +429,7 @@ wiring.
 npm version patch --no-git-tag-version   # vsce refuses to overwrite an existing .vsix
 npm run typecheck && npm test            # vsce does not run these for you
 npm run vsce:package
-unzip -l mlx-console-vscode-*.vsix       # inspect what actually shipped
+unzip -l mlx-console-gui-*.vsix       # inspect what actually shipped
 ```
 
 Each of these cost real time, so they are written down:
