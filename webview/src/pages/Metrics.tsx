@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { rpc, onPush, copy } from '../api'
 import { bytes } from '../format'
+import { Code } from './Code'
 import type { MetricsSnapshot, ModelProfile, ProcessGpuPush } from '../../../src/shared/protocol'
 
 /** A labelled bar. `max` of 0/undefined renders the label only. */
@@ -482,7 +483,7 @@ function RootCommand({ command }: { command?: string }) {
   return (
     <div className="col" style={{ gap: 4, marginTop: 4 }}>
       <div className="small">Run this yourself, then sample again:</div>
-      <pre className="snippet">{command}</pre>
+      <Code text={command} language="shell" />
       <div className="row">
         <button className="secondary" onClick={() => copy(command)}>
           Copy command

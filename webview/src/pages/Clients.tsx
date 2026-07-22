@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { rpc, onPush, copy } from '../api'
+import { Code } from './Code'
 import type { ExternalClientsInfo, ServerStatusLite } from '../../../src/shared/protocol'
 
 /**
@@ -89,7 +90,9 @@ function Snippet({ title, note, text }: { title: string; note?: string; text: st
         <a onClick={() => copy(text)}>Copy</a>
       </div>
       {note && <div className="small muted">{note}</div>}
-      <pre className="snippet">{text}</pre>
+      {/* Highlighted, since these are meant to be read before they are copied.
+          Copy still takes the plain text. */}
+      <Code text={text} />
     </div>
   )
 }
