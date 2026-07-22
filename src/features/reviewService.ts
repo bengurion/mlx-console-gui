@@ -1,6 +1,6 @@
 import * as vscode from 'vscode'
 import * as path from 'node:path'
-import { log } from '../util/logger'
+import { log } from '../core/logging'
 
 const REVIEW_SYSTEM = [
   'You are a meticulous senior code reviewer.',

@@ -1,7 +1,7 @@
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { log } from '../util/logger'
+import { log } from '../core/logging'
 import { Config } from '../config'
 import {
   cacheDirName,

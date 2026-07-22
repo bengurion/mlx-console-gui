@@ -2,7 +2,7 @@ import * as vscode from 'vscode'
 import { spawn } from 'node:child_process'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { log } from '../util/logger'
+import { log } from '../core/logging'
 import { Config } from '../config'
 import { mlxProcessEnv } from '../util/env'
 import {

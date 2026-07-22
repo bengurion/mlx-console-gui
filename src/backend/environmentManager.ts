@@ -1,8 +1,28 @@
-import * as vscode from 'vscode'
 import { spawn } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { log } from '../util/logger'
+import { log } from '../core/logging'
+import { Emitter } from '../core/events'
+
+/**
+ * What the environment manager needs from whichever host is running it.
+ *
+ * Creating a virtualenv and installing mlx-lm is a several-minute operation
+ * that can fail in ways only a person can resolve, so it needs to ask
+ * questions and report progress. VSCode answers with modals and a notification;
+ * the CLI answers on stdout. Every prompt is optional — with none of them,
+ * setup runs unattended and reports success or failure through its return.
+ */
+export interface EnvHost {
+  /** Where the managed venv lives when `venvPath` is unset. */
+  storageDir: string
+  /** Extra venvs to prefer, most-preferred first (VSCode: workspace folders). */
+  extraVenvDirs?(): string[]
+  confirm?(message: string, detail: string, action: string): Promise<boolean>
+  reportError?(message: string, action?: string): Promise<string | undefined>
+  reportInfo?(message: string): void
+  progress?<T>(title: string, task: (report: (message: string) => void) => Promise<T>): Promise<T>
+}
 import { Config } from '../config'
 
 export interface EnvStatus {
@@ -64,17 +84,17 @@ export class EnvironmentManager {
     ready: false,
     message: 'Not checked yet',
   }
-  private readonly _onDidChange = new vscode.EventEmitter<EnvStatus>()
+  private readonly _onDidChange = new Emitter<EnvStatus>()
   readonly onDidChange = this._onDidChange.event
 
-  constructor(private readonly context: vscode.ExtensionContext) {
+  constructor(private readonly host: EnvHost) {
     this.activeVenvDir = this.managedVenvDir
   }
 
   /** Where the extension creates/installs its own venv (a configured override, else global storage). */
   private get managedVenvDir(): string {
     const custom = Config.venvPath()
-    return custom || path.join(this.context.globalStorageUri.fsPath, 'venv')
+    return custom || path.join(this.host.storageDir, 'venv')
   }
 
   get status(): EnvStatus {
@@ -130,9 +150,7 @@ export class EnvironmentManager {
     const dirs: string[] = []
     const custom = Config.venvPath()
     if (custom) dirs.push(custom)
-    for (const folder of vscode.workspace.workspaceFolders ?? []) {
-      dirs.push(path.join(folder.uri.fsPath, '.venv'), path.join(folder.uri.fsPath, 'venv'))
-    }
+    dirs.push(...(this.host.extraVenvDirs?.() ?? []))
     dirs.push(this.managedVenvDir)
     return [...new Set(dirs)]
   }
@@ -197,9 +215,7 @@ export class EnvironmentManager {
   async ensureReady(interactive = true): Promise<boolean> {
     if (!this.platformOk()) {
       if (interactive) {
-        void vscode.window.showErrorMessage(
-          'MLX Console requires macOS on Apple Silicon (arm64).',
-        )
+        void this.host.reportError?.('MLX Console requires macOS on Apple Silicon (arm64).')
       }
       await this.refresh()
       return false
@@ -211,40 +227,40 @@ export class EnvironmentManager {
     const sys = await this.detectSystemPython()
     if (!sys) {
       if (interactive) {
-        const pick = await vscode.window.showErrorMessage(
+        await this.host.reportError?.(
           'MLX Console needs Python 3. Install it (e.g. `brew install python`) or set mlxConsole.pythonPath.',
           'Open Settings',
         )
-        if (pick === 'Open Settings') {
-          void vscode.commands.executeCommand('workbench.action.openSettings', 'mlxConsole.pythonPath')
-        }
       }
       return false
     }
 
-    if (interactive) {
-      const proceed = await vscode.window.showInformationMessage(
-        `MLX Console will create a Python virtual environment and install mlx-lm.\n\nPython: ${sys.version}\nLocation: ${this.managedVenvDir}`,
-        { modal: true },
+    if (interactive && this.host.confirm) {
+      const proceed = await this.host.confirm(
+        'MLX Console will create a Python virtual environment and install mlx-lm.',
+        `Python: ${sys.version}\nLocation: ${this.managedVenvDir}`,
         'Install',
       )
-      if (proceed !== 'Install') return false
+      if (!proceed) return false
     }
 
-    return vscode.window.withProgress(
-      { location: vscode.ProgressLocation.Notification, title: 'MLX Console setup', cancellable: false },
-      async (progress) => {
+    const withProgress =
+      this.host.progress ??
+      (async <T,>(_title: string, task: (report: (m: string) => void) => Promise<T>) =>
+        task((m) => log.info(m)))
+
+    return withProgress('MLX Console setup', async (report) => {
         try {
           this.activeVenvDir = this.managedVenvDir
           await fs.promises.mkdir(path.dirname(this.managedVenvDir), { recursive: true })
 
           if (!this.venvExists()) {
-            progress.report({ message: 'Creating virtual environment…' })
+            report('Creating virtual environment…')
             log.info(`Creating venv at ${this.managedVenvDir} using ${sys.path}`)
             const v = await run(sys.path, ['-m', 'venv', this.managedVenvDir], { timeoutMs: 120_000 })
             if (v.code !== 0 || !this.venvExists()) {
               log.error('venv creation failed', v.stderr)
-              void vscode.window.showErrorMessage(
+              void this.host.reportError?.(
                 'Failed to create the Python virtual environment. See MLX Console logs.',
               )
               log.show()
@@ -252,39 +268,36 @@ export class EnvironmentManager {
             }
           }
 
-          progress.report({ message: 'Upgrading pip…' })
+          report('Upgrading pip…')
           await run(this.venvPython, ['-m', 'pip', 'install', '--upgrade', 'pip'], {
             timeoutMs: 180_000,
           })
 
-          progress.report({ message: 'Installing mlx-lm (this can take a few minutes)…' })
+          report('Installing mlx-lm (this can take a few minutes)…')
           log.info('Installing mlx-lm')
           const i = await run(this.venvPython, ['-m', 'pip', 'install', '--upgrade', 'mlx-lm'], {
             timeoutMs: 900_000,
           })
           if (i.code !== 0) {
             log.error('mlx-lm install failed', i.stderr)
-            void vscode.window.showErrorMessage('Failed to install mlx-lm. See MLX Console logs.')
+            void this.host.reportError?.('Failed to install mlx-lm. See MLX Console logs.')
             log.show()
             return false
           }
 
           await this.refresh()
           if (this._status.ready) {
-            void vscode.window.showInformationMessage(
-              `MLX Console ready — mlx-lm ${this._status.mlxVersion}.`,
-            )
+            this.host.reportInfo?.(`MLX Console ready — mlx-lm ${this._status.mlxVersion}.`)
             return true
           }
           return false
         } catch (err) {
           log.error('setup error', err)
-          void vscode.window.showErrorMessage('MLX Console setup failed. See MLX Console logs.')
+          void this.host.reportError?.('MLX Console setup failed. See MLX Console logs.')
           log.show()
           return false
         }
-      },
-    )
+    })
   }
 
   dispose() {

@@ -1,5 +1,5 @@
-import * as vscode from 'vscode'
-import { log } from '../util/logger'
+import { Emitter } from '../core/events'
+import { log } from '../core/logging'
 import type { PythonHelper } from '../backend/pythonHelper'
 import type { DownloadItem } from '../shared/protocol'
 
@@ -8,11 +8,11 @@ export class DownloadManager {
   private readonly items = new Map<string, DownloadItem>()
   private readonly controllers = new Map<string, AbortController>()
 
-  private readonly _onDidChange = new vscode.EventEmitter<DownloadItem[]>()
+  private readonly _onDidChange = new Emitter<DownloadItem[]>()
   readonly onDidChange = this._onDidChange.event
 
   /** Fired with the repo id when a download completes successfully. */
-  private readonly _onDidComplete = new vscode.EventEmitter<string>()
+  private readonly _onDidComplete = new Emitter<string>()
   readonly onDidComplete = this._onDidComplete.event
 
   constructor(private readonly helper: PythonHelper) {}

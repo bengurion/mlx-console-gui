@@ -1,15 +1,22 @@
-import * as vscode from 'vscode'
 import {
   SAMPLING_DEFAULTS,
   mergeSampling,
   type SamplingOverride,
   type SamplingParams,
 } from './services/sampling'
+import { settings } from './core/settings'
 
-const SECTION = 'mlxConsole'
+export const SECTION = 'mlxConsole'
 
+/**
+ * The host's settings, whichever host that is.
+ *
+ * Named `cfg` and used exactly as the VSCode configuration object was, so the
+ * accessors below read the same as when this file could only run inside the
+ * editor.
+ */
 function cfg() {
-  return vscode.workspace.getConfiguration(SECTION)
+  return settings()
 }
 
 /** Typed accessors over the `mlxConsole.*` settings. */
@@ -60,14 +67,14 @@ export const Config = {
    * "auto", which lets the model's own metadata decide.
    */
   contextWindowOverride(): number | undefined {
-    const i = cfg().inspect<number>('contextWindow')
-    const set = i?.workspaceFolderValue ?? i?.workspaceValue ?? i?.globalValue
+    if (!cfg().isExplicit('contextWindow')) return undefined
+    const set = cfg().get<number>('contextWindow', 0)
     return typeof set === 'number' && set > 0 ? Math.floor(set) : undefined
   },
   /** Only when the user set it explicitly; undefined means "derive it". */
   maxOutputTokensOverride(): number | undefined {
-    const i = cfg().inspect<number>('maxOutputTokens')
-    const set = i?.workspaceFolderValue ?? i?.workspaceValue ?? i?.globalValue
+    if (!cfg().isExplicit('maxOutputTokens')) return undefined
+    const set = cfg().get<number>('maxOutputTokens', 0)
     return typeof set === 'number' && set > 0 ? Math.floor(set) : undefined
   },
   maxOutputTokens(): number {
@@ -167,10 +174,7 @@ function pickExplicit(fromModel?: SamplingOverride): SamplingOverride | undefine
   ]
   const out: SamplingOverride = {}
   for (const [field, key] of keys) {
-    const i = c.inspect<number>(key)
-    const userSet =
-      i?.workspaceFolderValue ?? i?.workspaceValue ?? i?.globalValue
-    if (userSet === undefined && fromModel[field] !== undefined) out[field] = fromModel[field]
+    if (!c.isExplicit(key) && fromModel[field] !== undefined) out[field] = fromModel[field]
   }
   return Object.keys(out).length ? out : undefined
 }

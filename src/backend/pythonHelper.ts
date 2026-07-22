@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import * as readline from 'node:readline'
-import { log } from '../util/logger'
+import { log } from '../core/logging'
 import { mlxProcessEnv } from '../util/env'
 import type { EnvironmentManager } from './environmentManager'
 import type { LocalModel } from '../shared/protocol'

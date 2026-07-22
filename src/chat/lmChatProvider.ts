@@ -1,5 +1,5 @@
 import * as vscode from 'vscode'
-import { log } from '../util/logger'
+import { log } from '../core/logging'
 import { Config } from '../config'
 import type { ServerManager } from '../backend/serverManager'
 import { assembleToolCalls, type ChatEvent, type ChatMessage, type ToolDef } from '../backend/mlxClient'

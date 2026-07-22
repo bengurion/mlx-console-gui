@@ -1,10 +1,10 @@
-import * as vscode from 'vscode'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { promises as fs } from 'node:fs'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { log } from '../util/logger'
+import { log } from '../core/logging'
+import { Emitter, type Disposable } from '../core/events'
 import { Config } from '../config'
 import {
   cpuPercent,
@@ -49,7 +49,7 @@ async function tryRun(cmd: string, args: string[]): Promise<string> {
  * nothing. Every source is best-effort: a missing tool degrades that one field
  * rather than failing the snapshot.
  */
-export class MetricsService implements vscode.Disposable {
+export class MetricsService implements Disposable {
   private timer: NodeJS.Timeout | undefined
   private prevCpu: CpuSample | undefined
   private deviceInfo: GpuDeviceInfo | undefined
@@ -57,8 +57,17 @@ export class MetricsService implements vscode.Disposable {
   private subscribers = 0
   private readonly modelConfig = new ModelConfigReader()
 
-  private readonly _onDidSample = new vscode.EventEmitter<MetricsSnapshot>()
+  private readonly _onDidSample = new Emitter<MetricsSnapshot>()
   readonly onDidSample = this._onDidSample.event
+
+  /**
+   * How to obtain root, when the host can offer it.
+   *
+   * Elevation is inherently a UI act — someone has to be asked and has to type
+   * a password — so the host supplies it. Without one, the non-interactive path
+   * is tried and the caller is told authentication is needed.
+   */
+  elevate?: (args: string[]) => Promise<boolean>
 
   constructor(
     private readonly env: EnvironmentManager,
@@ -67,13 +76,15 @@ export class MetricsService implements vscode.Disposable {
   ) {}
 
   /** Begin polling; the returned disposable releases this subscription. */
-  subscribe(): vscode.Disposable {
+  subscribe(): Disposable {
     this.subscribers++
     if (this.subscribers === 1) this.start()
-    return new vscode.Disposable(() => {
-      this.subscribers = Math.max(0, this.subscribers - 1)
-      if (this.subscribers === 0) this.stop()
-    })
+    return {
+      dispose: () => {
+        this.subscribers = Math.max(0, this.subscribers - 1)
+        if (this.subscribers === 0) this.stop()
+      },
+    }
   }
 
   private start() {
@@ -234,24 +245,10 @@ export class MetricsService implements vscode.Disposable {
       log.info('sudo -n powermetrics unavailable; falling back to an interactive terminal')
     }
 
-    // 2. Interactive: the user authenticates in a terminal they can inspect.
-    const choice = await vscode.window.showInformationMessage(
-      'Per-process GPU attribution needs root.',
-      {
-        modal: true,
-        detail:
-          `Runs:\n  sudo ${args.join(' ')}\n\n` +
-          'powermetrics is read-only telemetry. It runs in a terminal so you enter your own ' +
-          'password — the extension never sees it. This reports GPU time per process; macOS ' +
-          'has no per-process GPU memory accounting.',
-      },
-      'Run in Terminal',
-    )
-    if (choice !== 'Run in Terminal') return { ok: false, needsAuth: true }
-
-    const term = vscode.window.createTerminal('MLX: per-process GPU')
-    term.show()
-    term.sendText(`sudo ${args.join(' ')}`)
+    // 2. Interactive: the host asks, and the user types their own password
+    // somewhere they can see the command. We never handle the password.
+    if (!this.elevate) return { ok: false, needsAuth: true }
+    if (!(await this.elevate(args))) return { ok: false, needsAuth: true }
 
     // Poll for the file the privileged command writes.
     for (let i = 0; i < 60; i++) {

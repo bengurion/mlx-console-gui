@@ -1,5 +1,7 @@
 import * as vscode from 'vscode'
 import { initLogger, log } from './util/logger'
+import { setSettingsSource } from './core/settings'
+import { VsCodeSettings, vscodeElevate, vscodeEnvHost, vscodeHubHost } from './ui/vscodeHost'
 import { Config } from './config'
 import * as path from 'node:path'
 import { EnvironmentManager } from './backend/environmentManager'
@@ -10,7 +12,8 @@ import { CacheService } from './services/cacheService'
 import { DownloadManager } from './services/downloadManager'
 import { ConvertManager } from './services/convertManager'
 import { StatusBar } from './ui/statusBar'
-import { WebviewHub, registerWebviews } from './ui/webview/webviewHub'
+import { WebviewHub } from './ui/webview/webviewHub'
+import { registerWebviews } from './ui/webview/webviewViews'
 import { registerParticipant } from './chat/participant'
 import { registerLmChatProvider } from './chat/lmChatProvider'
 import { registerTools } from './chat/tools'
@@ -20,15 +23,18 @@ import { ReviewService } from './features/reviewService'
 
 export async function activate(context: vscode.ExtensionContext) {
   initLogger()
+  // Install the editor's answers to what the core asks for, before anything
+  // reads a setting.
+  setSettingsSource(new VsCodeSettings())
   log.info('MLX Console activating')
 
-  const env = new EnvironmentManager(context)
+  const env = new EnvironmentManager(vscodeEnvHost(context))
   const server = new ServerManager(env)
   const statusBar = new StatusBar()
 
   // The server is one global process shared by every window; this file lets
   // each window learn which model it already has resident.
-  server.useSharedState(vscode.Uri.joinPath(context.globalStorageUri, 'server-state.json'))
+  server.useSharedState(path.join(context.globalStorageUri.fsPath, 'server-state.json'))
 
   const helper = new PythonHelper(
     env,
@@ -39,6 +45,7 @@ export async function activate(context: vscode.ExtensionContext) {
   const downloads = new DownloadManager(helper)
   const convert = new ConvertManager(env, server)
   const metrics = new MetricsService(env, server)
+  metrics.elevate = vscodeElevate
   const hub = new WebviewHub({
     env,
     server,
@@ -48,6 +55,7 @@ export async function activate(context: vscode.ExtensionContext) {
     metrics,
     packageJSON: context.extension.packageJSON,
     extensionUri: context.extensionUri,
+    host: vscodeHubHost(),
   })
 
   context.subscriptions.push(

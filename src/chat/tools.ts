@@ -1,5 +1,5 @@
 import * as vscode from 'vscode'
-import { log } from '../util/logger'
+import { log } from '../core/logging'
 import type { ServerManager } from '../backend/serverManager'
 
 /**

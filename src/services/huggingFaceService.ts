@@ -1,5 +1,5 @@
 import { Config } from '../config'
-import { log } from '../util/logger'
+import { log } from '../core/logging'
 import { HF_API, buildSearchUrl, deriveQuant } from './hfQuery'
 import { bytesFromSafetensors, classifyFormat, estimateBytes, isGguf } from './modelFit'
 import type { ModelSummary, SearchQuery } from '../shared/protocol'

@@ -1,6 +1,8 @@
-import * as vscode from 'vscode'
 import { spawn, type ChildProcess } from 'node:child_process'
-import { log } from '../util/logger'
+import * as fs from 'node:fs'
+import * as path from 'node:path'
+import { Emitter, disposeAll, type Disposable } from '../core/events'
+import { log } from '../core/logging'
 import { Config } from '../config'
 import { mlxProcessEnv } from '../util/env'
 import type { EnvironmentManager } from './environmentManager'
@@ -63,11 +65,11 @@ export class ServerManager {
   private _lastLoadSeconds: number | undefined
   /** PID of a server this window did not spawn, learned from shared state. */
   private _externalPid: number | undefined
-  private stateFile: vscode.Uri | undefined
-  private readonly watcherSubs: vscode.Disposable[] = []
+  private stateFile: string | undefined
+  private readonly watcherSubs: Disposable[] = []
   private startPromise: Promise<boolean> | undefined
 
-  private readonly _onDidChange = new vscode.EventEmitter<ServerStatus>()
+  private readonly _onDidChange = new Emitter<ServerStatus>()
   readonly onDidChange = this._onDidChange.event
 
   readonly client: MlxClient
@@ -140,27 +142,29 @@ export class ServerManager {
    * Point this manager at the file used to share server state across windows.
    * Adopts whatever is already recorded, then keeps watching for changes.
    */
-  useSharedState(file: vscode.Uri): void {
+  useSharedState(file: string): void {
     this.stateFile = file
     void this.adoptSharedState()
 
-    // Watching a path outside any workspace folder requires a RelativePattern;
-    // a bare glob string only matches inside open folders.
-    const watcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(vscode.Uri.joinPath(file, '..'), 'server-state.json'),
-    )
-    const onChange = () => void this.adoptSharedState()
-    this.watcherSubs.push(
-      watcher,
-      watcher.onDidChange(onChange),
-      watcher.onDidCreate(onChange),
-      watcher.onDidDelete(() => {
+    // Watch the directory rather than the file: the file may not exist yet,
+    // and an atomic rewrite replaces the inode a file watch was holding.
+    const dir = path.dirname(file)
+    try {
+      fs.mkdirSync(dir, { recursive: true })
+      const watcher = fs.watch(dir, (_event, name) => {
+        if (name && name !== path.basename(file)) return
+        if (fs.existsSync(file)) return void this.adoptSharedState()
         if (this.proc) return // we own it; our own state is authoritative
         this._modelState = 'none'
         this._loadedModel = undefined
         this._onDidChange.fire(this.status)
-      }),
-    )
+      })
+      this.watcherSubs.push({ dispose: () => watcher.close() })
+    } catch (err) {
+      // Not fatal: without a watcher this window simply learns about another
+      // window's model on its next read rather than immediately.
+      log.warn(`Could not watch shared server state: ${String(err)}`)
+    }
   }
 
   /** Take on the loaded-model state recorded by whichever window loaded it. */
@@ -168,7 +172,7 @@ export class ServerManager {
     if (!this.stateFile || this.proc) return // owner's own state wins
     let text: string
     try {
-      text = new TextDecoder().decode(await vscode.workspace.fs.readFile(this.stateFile))
+      text = await fs.promises.readFile(this.stateFile, 'utf8')
     } catch {
       return
     }
@@ -200,11 +204,8 @@ export class ServerManager {
     }
     try {
       // Global storage is not created until something writes to it.
-      await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(this.stateFile, '..'))
-      await vscode.workspace.fs.writeFile(
-        this.stateFile,
-        new TextEncoder().encode(serializeState(state)),
-      )
+      await fs.promises.mkdir(path.dirname(this.stateFile), { recursive: true })
+      await fs.promises.writeFile(this.stateFile, serializeState(state))
     } catch (err) {
       log.warn(`Could not publish shared server state: ${String(err)}`)
     }
@@ -432,7 +433,7 @@ export class ServerManager {
   }
 
   dispose() {
-    for (const d of this.watcherSubs) d.dispose()
+    disposeAll(this.watcherSubs)
     // Deliberately does NOT stop the server. Closing a window should not unload
     // a model that took minutes to read — the process is shared across windows
     // and outlives any one of them. Stopping is an explicit user action.

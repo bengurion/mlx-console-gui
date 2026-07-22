@@ -1,8 +1,8 @@
-import * as vscode from 'vscode'
 import * as os from 'node:os'
-import { log } from '../../util/logger'
+import { log } from '../../core/logging'
+import { settings } from '../../core/settings'
+import type { Disposable } from '../../core/events'
 import { Config } from '../../config'
-import { getWebviewHtml } from './html'
 import { fitVerdict } from '../../services/modelFit'
 import type { EnvironmentManager } from '../../backend/environmentManager'
 import type { ServerManager } from '../../backend/serverManager'
@@ -32,13 +32,6 @@ import type {
   WebviewBound,
 } from '../../shared/protocol'
 
-const VIEW_IDS: Record<ViewId, string> = {
-  search: 'mlxConsole.search',
-  models: 'mlxConsole.models',
-  downloads: 'mlxConsole.downloads',
-  server: 'mlxConsole.server',
-}
-
 const FALLBACK_MODEL = 'mlx-community/Qwen2.5-Coder-7B-Instruct-4bit'
 
 export interface HubDeps {
@@ -53,8 +46,42 @@ export interface HubDeps {
     version?: string
     contributes?: { configuration?: { properties?: Record<string, ConfigProperty> } }
   }
-  extensionUri: vscode.Uri
+  extensionUri: { fsPath: string }
+  /** How to ask the user things. Omitted in headless, where nobody is asked. */
+  host?: HubHost
 }
+
+/**
+ * The interactive acts the hub cannot perform by itself.
+ *
+ * Deleting weights, restarting a server holding 60 GB, or changing a kernel
+ * memory limit all deserve a confirmation, and confirmation is the one thing
+ * that has to come from the host: a modal in VSCode, a prompt on a terminal,
+ * or — in the daemon, where nobody may be watching — a policy.
+ *
+ * Every member is optional. Missing `confirm` means "proceed", which is the
+ * right default for a caller that already clicked a button in a UI that said
+ * what it would do.
+ */
+export interface HubHost {
+  confirm?(args: { message: string; detail: string; action: string }): Promise<boolean>
+  reportError?(message: string): void
+  reportInfo?(message: string): void
+  /** Run a privileged command where the user can see it and type their own password. */
+  runElevated?(command: string, title: string): boolean
+  /** Show a long operation; the default just runs it. */
+  progress?<T>(title: string, task: () => Promise<T>): Promise<T>
+  /** Open a URL outside the app. */
+  openExternal?(url: string): void
+  copy?(text: string): Promise<void>
+  /** VSCode opens its settings editor; other hosts have nowhere to go. */
+  openSettings?(query?: string): void
+  /** Model conversion is an interactive flow that lives in the extension. */
+  convertModel?(repo: string): void
+}
+
+/** Nothing to ask, nothing to show: used when a host supplies no UI. */
+const SILENT_HOST: HubHost = {}
 
 /**
  * Anything that can receive a host→client message.
@@ -71,7 +98,7 @@ export interface MessageSink {
 /** Central message router shared by all MLX Console webview views. */
 export class WebviewHub {
   private readonly webviews = new Set<MessageSink>()
-  private readonly disposables: vscode.Disposable[] = []
+  private readonly disposables: Disposable[] = []
   private readonly modelConfig = new ModelConfigReader()
   /** Guards against re-profiling on every status tick for the same model. */
   private lastProfiled: string | undefined
@@ -103,7 +130,7 @@ export class WebviewHub {
    */
   private async setWiredLimit(megabytes: number): Promise<{ ok: boolean }> {
     if (!Number.isFinite(megabytes) || megabytes < 0) {
-      void vscode.window.showErrorMessage('MLX: wired memory limit must be a non-negative number.')
+      this.host.reportError?.('MLX: wired memory limit must be a non-negative number.')
       return { ok: false }
     }
     const mb = Math.floor(megabytes)
@@ -117,17 +144,19 @@ export class WebviewHub {
           'Leaving too little for macOS can cause severe swapping or a hang. ' +
           'The value resets on reboot.'
 
-    const choice = await vscode.window.showWarningMessage(
-      `Set GPU wired memory limit to ${label}?`,
-      { modal: true, detail: `${detail}\n\nRuns in a terminal so you can enter your password.` },
-      'Open Terminal',
+    const confirmed = await this.confirm({
+      message: `Set GPU wired memory limit to ${label}?`,
+      detail: `${detail}\n\nRuns in a terminal so you can enter your password.`,
+      action: 'Open Terminal',
+    })
+    if (!confirmed) return { ok: false }
+    // Never run with our own privileges: the command is shown, the user
+    // authenticates, and no password passes through this process.
+    const ran = this.host.runElevated?.(
+      `sudo sysctl iogpu.wired_limit_mb=${mb}`,
+      'MLX: GPU memory limit',
     )
-    if (choice !== 'Open Terminal') return { ok: false }
-
-    const term = vscode.window.createTerminal('MLX: GPU memory limit')
-    term.show()
-    term.sendText(`sudo sysctl iogpu.wired_limit_mb=${mb}`)
-    return { ok: true }
+    return { ok: ran ?? false }
   }
 
   /**
@@ -140,36 +169,30 @@ export class WebviewHub {
    */
   async unloadModel(): Promise<{ ok: boolean }> {
     const loaded = this.deps.server.loadedModel ?? this.deps.server.activeModel
-    const pick = await vscode.window.showWarningMessage(
-      loaded ? `Clear caches and reload ${loaded}?` : 'Restart the server to clear caches?',
-      {
-        modal: true,
-        detail:
-          'mlx_lm.server has no unload or cache-flush endpoint, so this restarts the ' +
-          'process — the only way to release the KV caches. ' +
-          (loaded
-            ? 'The same model is then loaded back, which takes as long as the original load.'
-            : 'The server comes back up idle.'),
-      },
-      'Clear and reload',
-    )
-    if (pick !== 'Clear and reload') return { ok: false }
+    const confirmed = await this.confirm({
+      message: loaded ? `Clear caches and reload ${loaded}?` : 'Restart the server to clear caches?',
+      detail:
+        'mlx_lm.server has no unload or cache-flush endpoint, so this restarts the ' +
+        'process — the only way to release the KV caches. ' +
+        (loaded
+          ? 'The same model is then loaded back, which takes as long as the original load.'
+          : 'The server comes back up idle.'),
+      action: 'Clear and reload',
+    })
+    if (!confirmed) return { ok: false }
 
     await this.deps.server.stop()
     log.info('Caches cleared (server stopped)')
 
     if (!(await this.deps.server.ensureRunning(false))) {
-      void vscode.window.showErrorMessage('MLX: the server did not come back up.')
+      this.host.reportError?.('MLX: the server did not come back up.')
       return { ok: false }
     }
     // Bring the model back so "clear" does not silently leave you with nothing
     // loaded; warmUp triggers the lazy load rather than waiting for a request.
     if (loaded) {
       log.info(`Reloading ${loaded} after cache clear`)
-      void vscode.window.withProgress(
-        { location: vscode.ProgressLocation.Notification, title: `MLX: reloading ${loaded}` },
-        () => this.deps.server.warmUp(loaded),
-      )
+      void this.withProgress(`MLX: reloading ${loaded}`, () => this.deps.server.warmUp(loaded))
     }
     return { ok: true }
   }
@@ -245,6 +268,24 @@ export class WebviewHub {
   }
 
   /** Read a model's own files and broadcast the result. */
+  /** Refcounted metrics sampling, for hosts that tie it to visibility. */
+  sampleMetrics(): Disposable {
+    return this.deps.metrics.subscribe()
+  }
+
+  private get host(): HubHost {
+    return this.deps.host ?? SILENT_HOST
+  }
+
+  /** Ask, when there is someone to ask; otherwise the caller already meant it. */
+  private confirm(args: { message: string; detail: string; action: string }): Promise<boolean> {
+    return this.host.confirm?.(args) ?? Promise.resolve(true)
+  }
+
+  private withProgress<T>(title: string, task: () => Promise<T>): Promise<T> {
+    return this.host.progress ? this.host.progress(title, task) : task()
+  }
+
   private async pushModelProfile(modelId: string): Promise<void> {
     try {
       const gen = this.modelConfig.generationDefaults(modelId)
@@ -269,10 +310,9 @@ export class WebviewHub {
 
   /** All contributed settings with their effective values. */
   settingsCatalog(): SettingSpec[] {
-    const cfg = vscode.workspace.getConfiguration('mlxConsole')
     return buildSettingsCatalog(
       this.deps.packageJSON.contributes?.configuration?.properties,
-      (short) => cfg.get(short),
+      (short) => settings().get(short, undefined),
     )
   }
 
@@ -297,9 +337,7 @@ export class WebviewHub {
     if (!coerced.ok) return { ok: false, error: coerced.error }
 
     try {
-      await vscode.workspace
-        .getConfiguration('mlxConsole')
-        .update(spec.short, coerced.value, vscode.ConfigurationTarget.Global)
+      await settings().update(spec.short, coerced.value)
       log.info(`Setting updated: ${key}`)
       return { ok: true, settings: this.settingsCatalog() }
     } catch (err) {
@@ -316,12 +354,8 @@ export class WebviewHub {
    * the client is connected, the same bargain the panel makes when visible.
    */
   attach(sink: MessageSink): () => void {
-    this.webviews.add(sink)
-    const metricsSub = this.deps.metrics.subscribe()
-    return () => {
-      this.webviews.delete(sink)
-      metricsSub.dispose()
-    }
+    const sub = this.connect(sink)
+    return () => sub.dispose()
   }
 
   /** Handle one client→host message. Public so non-webview clients can route. */
@@ -329,30 +363,22 @@ export class WebviewHub {
     return this.onMessage(sink, raw)
   }
 
-  register(view: vscode.WebviewView) {
-    const webview = view.webview
-    this.webviews.add(webview)
-    const sub = webview.onDidReceiveMessage((m) => void this.onMessage(webview, m))
-
-    // Sample metrics only while this view is actually visible, so a collapsed
-    // panel costs nothing.
-    let metricsSub: vscode.Disposable | undefined
-    const syncMetrics = () => {
-      if (view.visible && !metricsSub) metricsSub = this.deps.metrics.subscribe()
-      else if (!view.visible && metricsSub) {
-        metricsSub.dispose()
-        metricsSub = undefined
-      }
+  /**
+   * Connect a client that manages its own lifetime.
+   *
+   * Returns a disposer. Metrics sampling is tied to the connection rather than
+   * subscribed globally, so a collapsed panel or a closed browser tab costs
+   * nothing — which is the whole reason the sampler is refcounted.
+   */
+  connect(sink: MessageSink, opts: { sampleMetrics?: boolean } = {}): Disposable {
+    this.webviews.add(sink)
+    const metricsSub = opts.sampleMetrics === false ? undefined : this.deps.metrics.subscribe()
+    return {
+      dispose: () => {
+        this.webviews.delete(sink)
+        metricsSub?.dispose()
+      },
     }
-    syncMetrics()
-    const visSub = view.onDidChangeVisibility(syncMetrics)
-
-    view.onDidDispose(() => {
-      this.webviews.delete(webview)
-      sub.dispose()
-      visSub.dispose()
-      metricsSub?.dispose()
-    })
   }
 
   private broadcast(msg: WebviewBound) {
@@ -366,14 +392,14 @@ export class WebviewHub {
         await this.sendInitial(webview)
         break
       case 'openExternal':
-        void vscode.env.openExternal(vscode.Uri.parse(m.url))
+        this.host.openExternal?.(m.url)
         break
       case 'copy':
-        await vscode.env.clipboard.writeText(m.text)
-        void vscode.window.showInformationMessage('Copied to clipboard')
+        await this.host.copy?.(m.text)
+        this.host.reportInfo?.('Copied to clipboard')
         break
       case 'openSettings':
-        void vscode.commands.executeCommand('workbench.action.openSettings', m.query ?? 'mlxConsole')
+        this.host.openSettings?.(m.query)
         break
       case 'rpc':
         try {
@@ -408,7 +434,7 @@ export class WebviewHub {
       case 'getMachine':
         return this.machine()
       case 'convertModel':
-        void vscode.commands.executeCommand('mlxConsole.convertModel', repoOf())
+        this.host.convertModel?.(repoOf())
         return { ok: true }
       case 'getModelSize':
         return this.deps.hf.getModelSize(repoOf())
@@ -427,17 +453,15 @@ export class WebviewHub {
         return this.deps.env.status.ready ? this.deps.cache.list() : []
       case 'deleteModel': {
         const repo = repoOf()
-        const pick = await vscode.window.showWarningMessage(
-          `Delete "${repo}" from the model cache?`,
-          { modal: true, detail: 'This permanently removes the downloaded files from disk.' },
-          'Delete',
-        )
-        if (pick !== 'Delete') return { ok: false, canceled: true }
+        const confirmed = await this.confirm({
+          message: `Delete "${repo}" from the model cache?`,
+          detail: 'This permanently removes the downloaded files from disk.',
+          action: 'Delete',
+        })
+        if (!confirmed) return { ok: false, canceled: true }
         const res = await this.deps.cache.delete(repo)
         await this.refreshModels()
-        void vscode.window.showInformationMessage(
-          `MLX: deleted ${repo} (freed ${formatBytes(res.freedBytes)}).`,
-        )
+        this.host.reportInfo?.(`MLX: deleted ${repo} (freed ${formatBytes(res.freedBytes)}).`)
         return { ok: true, ...res }
       }
       case 'startDownload':
@@ -451,9 +475,7 @@ export class WebviewHub {
         return { ok }
       }
       case 'setDefaultModel':
-        await vscode.workspace
-          .getConfiguration('mlxConsole')
-          .update('defaultModel', repoOf(), vscode.ConfigurationTarget.Global)
+        await settings().update('defaultModel', repoOf())
         this.pushServerStatus()
         return { ok: true }
       case 'startServer':
@@ -623,40 +645,4 @@ function formatBytes(n: number): string {
     i++
   }
   return `${value.toFixed(value < 10 && i > 0 ? 1 : 0)} ${units[i]}`
-}
-
-class MlxWebviewProvider implements vscode.WebviewViewProvider {
-  constructor(
-    private readonly view: ViewId,
-    private readonly hub: WebviewHub,
-    private readonly extensionUri: vscode.Uri,
-  ) {}
-
-  resolveWebviewView(webviewView: vscode.WebviewView): void {
-    webviewView.webview.options = {
-      enableScripts: true,
-      localResourceRoots: [
-        vscode.Uri.joinPath(this.extensionUri, 'dist'),
-        vscode.Uri.joinPath(this.extensionUri, 'resources'),
-      ],
-    }
-    webviewView.webview.html = getWebviewHtml(webviewView.webview, this.extensionUri, this.view)
-    this.hub.register(webviewView)
-  }
-}
-
-/** Registers all four webview view providers. */
-export function registerWebviews(
-  context: vscode.ExtensionContext,
-  hub: WebviewHub,
-): void {
-  for (const view of Object.keys(VIEW_IDS) as ViewId[]) {
-    context.subscriptions.push(
-      vscode.window.registerWebviewViewProvider(
-        VIEW_IDS[view],
-        new MlxWebviewProvider(view, hub, context.extensionUri),
-        { webviewOptions: { retainContextWhenHidden: true } },
-      ),
-    )
-  }
 }
