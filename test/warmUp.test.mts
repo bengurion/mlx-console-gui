@@ -100,3 +100,28 @@ test('switching models reports the new one as loading, not the old one', async (
   await load
   assert.equal(mgr.loadedModel, 'org/second')
 })
+
+test('stopping mid-load leaves the UI in a state it can act on', async () => {
+  // The case behind making Stop always clickable: a load that will take
+  // minutes, interrupted on purpose. Killing the server makes the in-flight
+  // request fail, and that failure must clear "loading" — otherwise every
+  // button stays disabled against a load that is never coming back.
+  let fail: ((e: Error) => void) | undefined
+  const { mgr } = managerWith(() => new Promise<void>((_, reject) => (fail = reject)))
+
+  const load = mgr.warmUp('org/model')
+  await new Promise((r) => setTimeout(r, 10))
+  assert.equal(mgr.modelState, 'loading')
+
+  // What a killed server does to a request in flight.
+  fail?.(new Error('socket hang up'))
+  assert.equal(await load, false)
+
+  assert.equal(mgr.modelState, 'none', 'not stuck on loading')
+  assert.equal(mgr.loadedModel, undefined)
+
+  // And the next attempt is a fresh one, not a join onto the dead promise.
+  Object.assign(mgr, { client: { chat: async () => undefined } })
+  assert.equal(await mgr.warmUp('org/model'), true)
+  assert.equal(mgr.modelState, 'loaded')
+})

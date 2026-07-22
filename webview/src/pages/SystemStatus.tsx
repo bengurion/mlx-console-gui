@@ -16,6 +16,7 @@ export function SystemStatus() {
   const [models, setModels] = useState<LocalModel[]>([])
   const [choice, setChoice] = useState('')
   const [busy, setBusy] = useState(false)
+  const [stopping, setStopping] = useState(false)
 
   useEffect(() => onPush<ServerStatusLite>('serverStatus', setServer), [])
   useEffect(() => onPush<EnvStatusLite>('envStatus', setEnv), [])
@@ -50,6 +51,21 @@ export function SystemStatus() {
       await rpc('launchModel', { repo: choice })
     } finally {
       setBusy(false)
+    }
+  }
+
+  /**
+   * Stopping has its own in-flight flag.
+   *
+   * Sharing `busy` with launch meant the Stop button went dead for the whole
+   * duration of a load — the one time you most want it.
+   */
+  async function stop() {
+    setStopping(true)
+    try {
+      await rpc('stopServer')
+    } finally {
+      setStopping(false)
     }
   }
 
@@ -102,12 +118,28 @@ export function SystemStatus() {
             {loading ? 'Loading…' : isResident ? 'Resident' : server?.loadedModel ? 'Switch' : 'Start & load'}
           </button>
 
-          {running && (
-            <button className="secondary" disabled={busy} onClick={() => call('stopServer')}>
-              Stop
-            </button>
-          )}
-          <button className="secondary" disabled={busy} onClick={() => call('restartServer')}>
+          {/*
+            Stop is always available, and never disabled by another action in
+            flight. Interrupting a load that is going to take minutes — or one
+            you started by mistake — is the single most likely reason to reach
+            for it, and it was previously hidden while stopped and greyed out
+            while loading, which is precisely backwards.
+          */}
+          <button
+            className="secondary"
+            disabled={stopping}
+            title={
+              loading
+                ? 'Stops the server, abandoning the load in progress.'
+                : running
+                  ? 'Stops the server and frees the resident model.'
+                  : 'Stops any server on this port, including one left behind by another window.'
+            }
+            onClick={() => void stop()}
+          >
+            {stopping ? 'Stopping…' : loading ? 'Stop loading' : 'Stop'}
+          </button>
+          <button className="secondary" disabled={stopping} onClick={() => call('restartServer')}>
             Restart
           </button>
         </div>
