@@ -117,13 +117,26 @@ export function isSafeUserName(user: string): boolean {
  */
 export function grantsPasswordless(sudoListOutput: string, command: string[]): boolean {
   const wanted = command.join(' ')
-  return sudoListOutput
-    .split('\n')
-    .filter((line) => /NOPASSWD:/i.test(line))
-    // `sudo -l` may echo the entry with its sudoers escapes intact, so compare
-    // against the unescaped form rather than guessing which one it printed.
-    .map((line) => line.replace(/\\([,:=\\])/g, '$1'))
-    .some((line) => line.includes(wanted))
+
+  /*
+   * Matched across the whole listing rather than line by line, because sudo
+   * hard-wraps its output at around 80 columns — our command is longer than
+   * that, so it is split across two lines and no single line ever contains it.
+   * Collapsing whitespace first puts it back together.
+   *
+   * Order matters: entries are separated on unescaped commas *before* the
+   * escapes are removed, or our own `tasks\,gpu_power` would look like the end
+   * of one entry and the start of another.
+   */
+  const flat = sudoListOutput.replace(/\s+/g, ' ')
+  return flat
+    .split(/NOPASSWD:\s*/i)
+    .slice(1)
+    .flatMap((segment) => segment.split(/(?<!\\),/))
+    .map((entry) => entry.replace(/\\([,:=\\])/g, '$1').trim())
+    // startsWith, not includes: the grant has to be *for* this command, not
+    // merely mention it after some other passwordless entry.
+    .some((entry) => entry.startsWith(wanted))
 }
 
 /**

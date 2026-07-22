@@ -94,10 +94,11 @@ test('an admin\'s blanket (ALL) ALL is not mistaken for a grant', () => {
   ].join('\n')
   assert.equal(grantsPasswordless(noRule, command), false)
 
+  // sudo echoes the entry as sudoers stores it, escapes intact.
   const withRule = [
     'User ben may run the following commands on bens-macbook-pro:',
     '    (ALL) ALL',
-    `    (root) NOPASSWD: ${command.join(' ')}`,
+    `    (root) NOPASSWD: ${command.map(sudoersEscape).join(' ')}`,
   ].join('\n')
   assert.equal(grantsPasswordless(withRule, command), true)
 })
@@ -132,11 +133,44 @@ test('the rule escapes what sudoers treats as syntax, and visudo accepts it', ()
   assert.equal(sudoersEscape('/usr/bin/powermetrics'), '/usr/bin/powermetrics', 'paths untouched')
 })
 
-test('a grant is recognised whether sudo echoes it escaped or not', () => {
+test('an unescaped comma in a listing means two commands, not one', () => {
   const command = sampleCommand('/Users/ben')
-  const plain = `    (root) NOPASSWD: ${command.join(' ')}`
-  const escaped = `    (root) NOPASSWD: ${command.map(sudoersEscape).join(' ')}`
 
-  assert.equal(grantsPasswordless(plain, command), true)
+  // Not a formatting quirk to paper over: in sudoers grammar a bare comma
+  // separates entries, so this listing grants `... --samplers tasks` and a
+  // second command starting `gpu_power` — neither of which is what we run.
+  const bareComma = `    (root) NOPASSWD: ${command.join(' ')}`
+  assert.equal(grantsPasswordless(bareComma, command), false)
+
+  const escaped = `    (root) NOPASSWD: ${command.map(sudoersEscape).join(' ')}`
   assert.equal(grantsPasswordless(escaped, command), true, 'escapes are normalised away')
+})
+
+test('a grant wrapped across lines by sudo is still recognised', () => {
+  const command = sampleCommand('/Users/ben')
+
+  // Verbatim from `sudo -n -l` on this machine: sudo hard-wraps at ~80
+  // columns, so the command spans two lines and no single line contains it.
+  // Matching line by line reported "not authorised" for a rule that was
+  // installed and working.
+  const listing = [
+    'User ben may run the following commands on bens-macbook-pro:',
+    '    (ALL) ALL',
+    '    (root) NOPASSWD: /usr/bin/powermetrics --samplers tasks\\,gpu_power',
+    '    --show-process-gpu -n 1 -i 1000 -o /Users/ben/.mlx-console/powermetrics.txt',
+  ].join('\n')
+
+  assert.equal(grantsPasswordless(listing, command), true)
+})
+
+test('a NOPASSWD for something else does not vouch for our command', () => {
+  const command = sampleCommand('/Users/ben')
+
+  // Our command appears, but under (ALL) ALL — which needs a password — while
+  // the passwordless grant is for an unrelated binary.
+  const listing = [
+    '    (root) NOPASSWD: /bin/rm -f /tmp/x',
+    `    (ALL) ALL: ${command.join(' ')}`,
+  ].join('\n')
+  assert.equal(grantsPasswordless(listing, command), false)
 })
