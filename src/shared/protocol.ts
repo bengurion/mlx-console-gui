@@ -242,7 +242,7 @@ export interface ExternalClientsInfo {
   activeModel?: string
   hasApiKey: boolean
   exposeToLan: boolean
-  snippets: { opencode: string; copilot: string }
+  snippets: { opencode: string; copilot: string; vscode: string; curl: string }
 }
 
 export type RpcMethod =
@@ -296,3 +296,5 @@ export type WebviewBound =
   | { type: 'push'; name: 'metrics'; data: MetricsSnapshot }
   | { type: 'push'; name: 'modelProfile'; data: ModelProfile }
   | { type: 'push'; name: 'processGpu'; data: ProcessGpuPush }
+  /** Reveal one setting in the settings view, wherever that view lives. */
+  | { type: 'push'; name: 'revealSetting'; data: { short: string } }

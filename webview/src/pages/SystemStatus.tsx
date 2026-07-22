@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
-import { rpc, onPush } from '../api'
-import { InlineSetting } from './InlineSetting'
+import { rpc, onPush, openSettings } from '../api'
 import type { EnvStatusLite, LocalModel, ServerStatusLite } from '../../../src/shared/protocol'
 
 /**
@@ -132,14 +131,19 @@ export function SystemStatus() {
         <div className="divider" />
 
         <strong className="small">Storage</strong>
-        {/* Editable here rather than a link elsewhere: the path in use is shown
-            above the field that sets it, so you can see what an empty value
-            resolves to. */}
-        <div className="small muted">In use: <code>{env?.modelsDir ?? '…'}</code></div>
-        <InlineSetting short="modelsDir" />
-        <div className="small muted">In use: <code>{env?.venvPath ?? '(run setup)'}</code></div>
-        <InlineSetting short="venvPath" />
-        <InlineSetting short="pythonPath" />
+        {/* Read-only here. The Dashboard reports what is in use; changing it is
+            the settings view's job, and Change takes you straight to the field
+            rather than making you find it. */}
+        <div className="row spread small">
+          <span className="muted">Models download dir</span>
+          <a onClick={() => openSettings('modelsDir')}>Change</a>
+        </div>
+        <code className="small">{env?.modelsDir ?? '…'}</code>
+        <div className="row spread small">
+          <span className="muted">Python env (mlx-lm)</span>
+          <a onClick={() => openSettings('venvPath')}>Change</a>
+        </div>
+        <code className="small">{env?.venvPath ?? '(run setup)'}</code>
       </div>
     </>
   )

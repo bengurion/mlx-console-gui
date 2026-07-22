@@ -491,9 +491,15 @@ export class WebviewHub {
         await this.host.copy?.(m.text)
         this.host.reportInfo?.('Copied to clipboard')
         break
-      case 'openSettings':
+      case 'openSettings': {
+        // Two halves: the host brings its settings view forward (a focused
+        // panel in VSCode, a tab switch in the browser), and the push tells
+        // that view which setting to reveal once it is there.
+        const short = (m.query ?? '').replace(/^mlxConsole\./, '')
         this.host.openSettings?.(m.query)
+        this.broadcast({ type: 'push', name: 'revealSetting', data: { short } })
         break
+      }
       case 'rpc':
         try {
           const result = await this.handleRpc(m.method, m.params)
@@ -729,21 +735,53 @@ export class WebviewHub {
       null,
       2,
     )
+    const key = hasApiKey ? '(your configured key)' : 'any non-empty value'
+
     const copilot = [
       'GitHub Copilot Chat → model picker → Manage Models → Add provider',
       'Provider type: OpenAI-compatible',
       `Base URL: ${baseUrl}`,
-      `API key: ${hasApiKey ? '(your configured key)' : 'any non-empty value'}`,
+      `API key: ${key}`,
       '',
       'Note: BYOK in VS Code needs a Copilot Business/Enterprise seat.',
-      'Otherwise just pick the "MLX (local)" models already in the model picker.',
     ].join('\n')
+
+    /*
+     * VSCode without this extension.
+     *
+     * Worth spelling out separately: the server is an ordinary
+     * OpenAI-compatible endpoint, and nothing about reaching it from an editor
+     * depends on the extension being installed. Continue is the route that
+     * needs no Copilot seat.
+     */
+    const vscode = [
+      '# Continue (marketplace: Continue.continue) — no Copilot seat needed.',
+      '# Add to ~/.continue/config.yaml:',
+      '',
+      'models:',
+      '  - name: MLX (local)',
+      '    provider: openai',
+      `    model: ${model}`,
+      `    apiBase: ${baseUrl}`,
+      `    apiKey: ${hasApiKey ? '<your configured key>' : 'unused'}`,
+      '',
+      '# Cline, Roo and most other extensions: choose the "OpenAI Compatible"',
+      `# provider and give it the same base URL and model id.`,
+    ].join('\n')
+
+    const curl = [
+      `curl ${baseUrl}/chat/completions \\`,
+      "  -H 'Content-Type: application/json' \\",
+      `  -H 'Authorization: Bearer ${hasApiKey ? '<your configured key>' : 'x'}' \\`,
+      `  -d '${JSON.stringify({ model, messages: [{ role: 'user', content: 'hello' }] })}'`,
+    ].join('\n')
+
     return {
       baseUrl,
       activeModel: this.deps.server.activeModel,
       hasApiKey,
       exposeToLan: Config.exposeToLan(),
-      snippets: { opencode, copilot },
+      snippets: { opencode, copilot, vscode, curl },
     }
   }
 

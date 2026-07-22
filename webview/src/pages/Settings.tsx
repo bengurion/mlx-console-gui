@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { onPush } from '../api'
 import { saveSetting, useSettings } from '../settings'
 import type { SettingSpec } from '../../../src/shared/protocol'
 
@@ -183,20 +184,22 @@ export function SettingsPage() {
   ).length
 
   /**
-   * "Change" links elsewhere in the UI ask the host to open its settings
-   * editor. A browser has none, so the shell turns that request into this
-   * event and the panel reveals the setting itself.
+   * A "Change" link elsewhere in the UI reveals the setting here.
+   *
+   * The host broadcasts which one after bringing this view forward, so the
+   * same path works whether the view is a VSCode panel or a browser tab.
    */
-  useEffect(() => {
-    const onOpen = (e: Event) => {
-      const key = String((e as CustomEvent).detail ?? '').replace(/^mlxConsole\./, '')
-      setOpen(true)
-      setFilter(key)
-      requestAnimationFrame(() => ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
-    }
-    window.addEventListener('mlx:open-settings', onOpen)
-    return () => window.removeEventListener('mlx:open-settings', onOpen)
-  }, [])
+  useEffect(
+    () =>
+      onPush<{ short: string }>('revealSetting', ({ short }) => {
+        setOpen(true)
+        setFilter(short)
+        requestAnimationFrame(() =>
+          ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+        )
+      }),
+    [],
+  )
 
   return (
     <div className="card col" ref={ref}>

@@ -131,8 +131,10 @@ export function vscodeHubHost(): HubHost {
 
     openExternal: (url) => void vscode.env.openExternal(vscode.Uri.parse(url)),
     copy: (text) => Promise.resolve(vscode.env.clipboard.writeText(text)).then(() => {}),
-    openSettings: (query) =>
-      void vscode.commands.executeCommand('workbench.action.openSettings', query ?? 'mlxConsole'),
+    // Our own settings view, not the editor's settings editor: every value is
+    // editable in this UI, and sending people elsewhere to change one is the
+    // thing that is being removed.
+    openSettings: () => void vscode.commands.executeCommand('mlxConsole.server.focus'),
     convertModel: (repo) => void vscode.commands.executeCommand('mlxConsole.convertModel', repo),
   }
 }

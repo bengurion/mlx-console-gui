@@ -1,15 +1,15 @@
 import { useEffect, useState } from 'react'
 import { rpc, onPush, copy } from '../api'
-import { InlineSetting } from './InlineSetting'
 import type { ExternalClientsInfo, ServerStatusLite } from '../../../src/shared/protocol'
 
 /**
- * Connecting other tools to this server.
+ * How to connect something to this server.
  *
- * Its own view because it is a task you do once per tool and then forget,
- * rather than something to scroll past whenever you check on the server. The
- * snippets are generated host-side from the live base URL and active model, so
- * what you copy is what is actually running.
+ * Instructions only — no settings. The port, LAN exposure and API key are
+ * configured in the settings view; repeating them here would mean two places
+ * to change the same value and two chances to disagree about it. What belongs
+ * here is what to paste where, generated from the live base URL and model so
+ * it is correct rather than illustrative.
  */
 export function ClientsPage() {
   const [ext, setExt] = useState<ExternalClientsInfo>()
@@ -32,40 +32,58 @@ export function ClientsPage() {
     <div className="col">
       <div className="card col">
         <strong>Endpoint</strong>
-        <div className="small muted">Point OpenAI-compatible tools at this local server.</div>
+        <div className="small muted">
+          An ordinary OpenAI-compatible API. Anything that speaks it can use this server.
+        </div>
         <div className="row spread">
           <code className="small">{ext.baseUrl}</code>
           <a onClick={() => copy(ext.baseUrl)}>Copy</a>
         </div>
-        <InlineSetting short="server.exposeToLan" />
-        <InlineSetting short="server.port" />
-        <InlineSetting short="server.apiKey" />
-        {ext.hasApiKey ? (
+        <div className="small muted">
+          {ext.hasApiKey
+            ? 'An API key is configured — clients must send it as a bearer token.'
+            : 'No API key required. Most clients insist on sending one anyway; any non-empty value works.'}
+          {ext.exposeToLan && ' Reachable from your network, not just this machine.'}
+        </div>
+        {ext.activeModel && (
           <div className="small muted">
-            An API key is configured; clients must send it as a bearer token.
-          </div>
-        ) : (
-          <div className="small muted">
-            No API key set — any non-empty key is accepted, which most clients insist on sending.
+            Model id to use: <code>{ext.activeModel}</code>
           </div>
         )}
       </div>
 
-      <div className="card col">
-        <div className="row spread">
-          <strong>opencode</strong>
-          <a onClick={() => copy(ext.snippets.opencode)}>Copy config</a>
-        </div>
-        <pre className="snippet">{ext.snippets.opencode}</pre>
-      </div>
+      <Snippet
+        title="VS Code — without this extension"
+        note="Nothing about reaching the server from an editor depends on this extension being installed."
+        text={ext.snippets.vscode}
+      />
 
-      <div className="card col">
-        <div className="row spread">
-          <strong>GitHub Copilot (BYOK)</strong>
-          <a onClick={() => copy(ext.snippets.copilot)}>Copy steps</a>
-        </div>
-        <pre className="snippet">{ext.snippets.copilot}</pre>
+      <Snippet
+        title="VS Code — GitHub Copilot (BYOK)"
+        note="Uses the built-in model picker. Needs a Copilot Business or Enterprise seat."
+        text={ext.snippets.copilot}
+      />
+
+      <Snippet title="opencode" text={ext.snippets.opencode} />
+
+      <Snippet
+        title="Anything else"
+        note="Check the server is answering before blaming the client."
+        text={ext.snippets.curl}
+      />
+    </div>
+  )
+}
+
+function Snippet({ title, note, text }: { title: string; note?: string; text: string }) {
+  return (
+    <div className="card col">
+      <div className="row spread">
+        <strong>{title}</strong>
+        <a onClick={() => copy(text)}>Copy</a>
       </div>
+      {note && <div className="small muted">{note}</div>}
+      <pre className="snippet">{text}</pre>
     </div>
   )
 }

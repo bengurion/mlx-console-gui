@@ -460,9 +460,9 @@ window.__MLX_VIEW__ = ${JSON.stringify(view)};
         if (msg && msg.type === 'openExternal') return void window.open(msg.url, '_blank', 'noopener');
         if (msg && msg.type === 'copy') return void navigator.clipboard.writeText(msg.text);
         if (msg && msg.type === 'openSettings') {
-          // No settings editor in a browser, and since the split the settings
-          // panel is on its own tab — so switch there first, then let it
-          // reveal the setting. Dispatching alone would reach nothing.
+          // Bring the settings tab forward; the host answers with a
+          // revealSetting push that tells the panel which one to show. Doing
+          // the second half here too would mean two mechanisms to keep in step.
           if (window.__MLX_SHOW__) {
             window.__MLX_SHOW__('settings');
             document.querySelectorAll('button[data-view]').forEach(function (o) {
@@ -470,10 +470,7 @@ window.__MLX_VIEW__ = ${JSON.stringify(view)};
             });
             history.replaceState(null, '', '?view=settings');
           }
-          // After the view has mounted, or the listener will not exist yet.
-          requestAnimationFrame(function () {
-            window.dispatchEvent(new CustomEvent('mlx:open-settings', { detail: msg.query || '' }));
-          });
+          send(msg);
           return;
         }
         send(msg);
