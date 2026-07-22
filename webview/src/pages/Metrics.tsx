@@ -319,7 +319,7 @@ function PromptCacheAdvice({ m }: { m?: MetricsSnapshot }) {
     <div>
       <div className="row spread">
         <strong className="small">KV prompt cache</strong>
-        <a onClick={() => void rpc('unloadModel').catch(() => undefined)}>Unload &amp; clear</a>
+        <a onClick={() => void rpc('unloadModel').catch(() => undefined)}>Clear &amp; reload</a>
         {recommended !== undefined && (
           <a onClick={() => void apply(recommended)} style={{ marginLeft: 8 }}>
             {busy ? 'Saving…' : `Use ${bytes(recommended)}`}

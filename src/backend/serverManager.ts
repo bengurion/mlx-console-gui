@@ -45,6 +45,9 @@ export interface ServerStatus {
 
 const READY_TIMEOUT_MS = 60_000
 const READY_POLL_MS = 500
+/** How long to wait for a clean exit before escalating to SIGKILL. */
+const STOP_TIMEOUT_MS = 5000
+const STOP_POLL_MS = 200
 
 /** Spawns and supervises a single `mlx_lm.server` process and tracks its state. */
 export class ServerManager {
@@ -312,7 +315,10 @@ export class ServerManager {
     log.info(`Starting mlx_lm.server: ${bin} ${args.join(' ')}`)
 
     try {
-      this.proc = spawn(bin, args, { env: mlxProcessEnv() })
+      // `detached` gives the server its own process group so it survives the
+      // extension host exiting. Without it the child shares our group and dies
+      // with VSCode, unloading a model that took minutes to read.
+      this.proc = spawn(bin, args, { env: mlxProcessEnv(), detached: true })
     } catch (err) {
       log.error('Failed to spawn mlx_lm.server', err)
       this.setState('error', String(err))
@@ -335,7 +341,7 @@ export class ServerManager {
       log.info('mlx_lm.server ready')
     } else {
       this.setState('error', 'Server did not become ready in time')
-      this.stop()
+      await this.stop()
     }
     return ok
   }
@@ -370,32 +376,83 @@ export class ServerManager {
     }
   }
 
-  stop() {
-    if (this.proc) {
-      log.info('Stopping mlx_lm.server')
-      this.proc.kill('SIGTERM')
-      this.proc = undefined
+  /**
+   * Stop the server and confirm it is actually gone.
+   *
+   * Two things went wrong with the naive version. It only acted when this
+   * window had spawned the process, so a server adopted from another window was
+   * left running while the UI showed "stopped". And it cleared the handle
+   * immediately after SIGTERM, so a wedged process — one that has stopped
+   * servicing requests but not exited — survived with its model still resident.
+   *
+   * So: resolve a pid from either source, ask politely, then insist.
+   */
+  async stop(): Promise<void> {
+    const pid = this.proc?.pid ?? this._externalPid
+    if (pid !== undefined) {
+      log.info(`Stopping mlx_lm.server (pid ${pid})`)
+      this.signal(pid, 'SIGTERM')
+
+      // Give it a moment to shut down cleanly, then stop asking.
+      const deadline = Date.now() + STOP_TIMEOUT_MS
+      while (Date.now() < deadline && pidAlive(pid)) {
+        await delay(STOP_POLL_MS)
+      }
+      if (pidAlive(pid)) {
+        log.warn(`pid ${pid} ignored SIGTERM after ${STOP_TIMEOUT_MS}ms; sending SIGKILL`)
+        this.signal(pid, 'SIGKILL')
+        const hardDeadline = Date.now() + STOP_TIMEOUT_MS
+        while (Date.now() < hardDeadline && pidAlive(pid)) {
+          await delay(STOP_POLL_MS)
+        }
+      }
+      if (pidAlive(pid)) {
+        // Do not claim it stopped when it plainly has not.
+        log.error(`pid ${pid} is still running after SIGKILL`)
+        this.setState('error', `Server process ${pid} would not stop`)
+        return
+      }
+      log.info(`mlx_lm.server (pid ${pid}) stopped`)
     }
+
+    this.proc = undefined
+    this._externalPid = undefined
     // Weights live in the server process, so stopping it frees everything.
     this._modelState = 'none'
     this._loadedModel = undefined
     this._loadStartedAt = undefined
     this._loadedAt = undefined
-    this._externalPid = undefined
     this.setActiveModel(undefined)
     this.setState('stopped')
     void this.publishSharedState()
   }
 
+  /** Signal a pid, tolerating a process that has already exited. */
+  private signal(pid: number, sig: NodeJS.Signals): void {
+    try {
+      process.kill(pid, sig)
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code !== 'ESRCH') {
+        log.warn(`Could not send ${sig} to ${pid}: ${String(err)}`)
+      }
+    }
+  }
+
   async restart(): Promise<boolean> {
-    this.stop()
+    await this.stop()
     await delay(300)
     return this.ensureRunning(false)
   }
 
   dispose() {
     for (const d of this.watcherSubs) d.dispose()
-    this.stop()
+    // Deliberately does NOT stop the server. Closing a window should not unload
+    // a model that took minutes to read — the process is shared across windows
+    // and outlives any one of them. Stopping is an explicit user action.
+    if (this.proc) {
+      log.info(`Extension deactivating; leaving mlx_lm.server (pid ${this.proc.pid}) running`)
+      this.proc.unref()
+    }
     this._onDidChange.dispose()
   }
 }

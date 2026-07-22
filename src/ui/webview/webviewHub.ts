@@ -127,22 +127,38 @@ export class WebviewHub {
    * process is therefore the only way to release either.
    */
   private async unloadModel(): Promise<{ ok: boolean }> {
-    const loaded = this.deps.server.loadedModel
+    const loaded = this.deps.server.loadedModel ?? this.deps.server.activeModel
     const pick = await vscode.window.showWarningMessage(
-      loaded ? `Unload ${loaded} and clear its cache?` : 'Restart the server to clear caches?',
+      loaded ? `Clear caches and reload ${loaded}?` : 'Restart the server to clear caches?',
       {
         modal: true,
         detail:
-          'The server has no unload or cache-clear endpoint, so this restarts the process. ' +
-          'That frees the model weights and every KV/prompt cache. The next request reloads ' +
-          'the model, which can take minutes for a large one.',
+          'mlx_lm.server has no unload or cache-flush endpoint, so this restarts the ' +
+          'process — the only way to release the KV caches. ' +
+          (loaded
+            ? 'The same model is then loaded back, which takes as long as the original load.'
+            : 'The server comes back up idle.'),
       },
-      'Unload',
+      'Clear and reload',
     )
-    if (pick !== 'Unload') return { ok: false }
+    if (pick !== 'Clear and reload') return { ok: false }
 
-    this.deps.server.stop()
-    log.info('Model unloaded and caches cleared (server stopped)')
+    await this.deps.server.stop()
+    log.info('Caches cleared (server stopped)')
+
+    if (!(await this.deps.server.ensureRunning(false))) {
+      void vscode.window.showErrorMessage('MLX: the server did not come back up.')
+      return { ok: false }
+    }
+    // Bring the model back so "clear" does not silently leave you with nothing
+    // loaded; warmUp triggers the lazy load rather than waiting for a request.
+    if (loaded) {
+      log.info(`Reloading ${loaded} after cache clear`)
+      void vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: `MLX: reloading ${loaded}` },
+        () => this.deps.server.warmUp(loaded),
+      )
+    }
     return { ok: true }
   }
 
@@ -395,7 +411,7 @@ export class WebviewHub {
       case 'startServer':
         return { ok: await this.deps.server.ensureRunning(true) }
       case 'stopServer':
-        this.deps.server.stop()
+        await this.deps.server.stop()
         return { ok: true }
       case 'restartServer':
         return { ok: await this.deps.server.restart() }
