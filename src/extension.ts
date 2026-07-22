@@ -66,8 +66,8 @@ export async function activate(context: vscode.ExtensionContext) {
 
   registerWebviews(context, hub)
 
-  // Optional local dashboard. Loopback only; see services/webUi.ts for why the
-  // token matters even though nothing is exposed off-machine.
+  // Local dashboard. Loopback only, and cross-site requests are refused; see
+  // services/webUi.ts for why that is the check that matters.
   const webUi = new WebUiServer({
     settings: () => hub.settingsCatalog(),
     updateSetting: (key, value) => hub.updateSetting({ key, value }),
@@ -81,11 +81,14 @@ export async function activate(context: vscode.ExtensionContext) {
     log,
     notify: (message) => void vscode.window.showErrorMessage(message),
     hostLabel: 'VS Code',
+    requireToken: () => Config.webUiRequireToken(),
   })
   context.subscriptions.push(webUi)
 
   const syncWebUi = async () => {
-    if (Config.webUiEnabled()) await webUi.start(Config.webUiPort())
+    // Enabled by default, so a busy port is the normal case in a second window
+    // rather than an error worth interrupting anyone about: take another one.
+    if (Config.webUiEnabled()) await webUi.start(Config.webUiPort(), { onBusy: 'ephemeral' })
     else await webUi.stop()
   }
   void syncWebUi()
@@ -106,8 +109,8 @@ export async function activate(context: vscode.ExtensionContext) {
       }
       const url = webUi.url
       if (!url) return void vscode.window.showErrorMessage('MLX: the dashboard is not listening.')
-      // The URL carries the session token, so open it rather than asking the
-      // user to copy one.
+      // Carries the session token when one is required, so open it rather than
+      // asking anyone to assemble a URL.
       void vscode.env.openExternal(vscode.Uri.parse(url))
     }),
     vscode.commands.registerCommand('mlxConsole.copyWebUiUrl', async () => {
@@ -115,7 +118,11 @@ export async function activate(context: vscode.ExtensionContext) {
       const url = webUi.url
       if (!url) return void vscode.window.showErrorMessage('MLX: the dashboard is not listening.')
       await vscode.env.clipboard.writeText(url)
-      void vscode.window.showInformationMessage('MLX: dashboard URL copied (it contains the session token).')
+      void vscode.window.showInformationMessage(
+        Config.webUiRequireToken()
+          ? 'MLX: dashboard URL copied (it contains the session token).'
+          : 'MLX: dashboard URL copied.',
+      )
     }),
   )
 

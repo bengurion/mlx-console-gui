@@ -32,14 +32,14 @@ const HELP = `mlx-console ${pkg.version} — MLX Console without VS Code
   mlx-console stop               stop mlx_lm.server
   mlx-console restart            restart mlx_lm.server
   mlx-console status [--json]    what is running, and what it costs
-  mlx-console url                the tokenised dashboard link
+  mlx-console url                print the dashboard link
   mlx-console install [--port N] run the dashboard at login (launchd)
   mlx-console uninstall          remove the launchd agent
   mlx-console config             where settings are read from
 
 Settings live in ~/.mlx-console/config.json, seeded once from your VS Code
-settings. The dashboard is loopback-only and token-authenticated; the URL is
-printed when it starts.
+settings. The dashboard is loopback-only and refuses cross-site requests; set
+webUi.requireToken for a token as well. The URL is printed when it starts.
 `
 
 const log = {
@@ -135,7 +135,7 @@ async function metrics(pid?: number, venv?: string) {
   return out
 }
 
-/** Where the running daemon leaves its tokenised URL, readable only by you. */
+/** Where the running daemon leaves its URL, readable only by you. */
 const URL_FILE = path.join(os.homedir(), '.mlx-console', 'url')
 
 function writeUrlFile(url: string): void {
@@ -205,15 +205,16 @@ async function serve(port?: number): Promise<void> {
     log,
     notify: (m) => log.error(m),
     hostLabel: 'the mlx-console daemon',
+    requireToken: () => settings.get<boolean>('webUi.requireToken', false),
   })
 
   const url = await ui.start(uiPort)
   if (!url) {
     process.exitCode = 1
   } else {
-    // The URL contains the token. Under launchd stdout is a 0644 log file, so
-    // print it only to a terminal and otherwise leave it in a 0600 file that
-    // `mlx-console url` reads back.
+    // With a token configured the URL is a credential, and under launchd
+    // stdout is a 0644 log file — so print it only to a terminal and otherwise
+    // leave it in a 0600 file that `mlx-console url` reads back.
     writeUrlFile(url)
     if (process.stdout.isTTY) {
       console.log(`\n  MLX Console — ${url}\n`)

@@ -10,7 +10,9 @@ import {
 } from '../src/services/webUi.ts'
 
 const TOKEN = 'a'.repeat(32)
-const ok = (over = {}) => authorize({ host: '127.0.0.1:8090', token: TOKEN, givenToken: TOKEN, ...over })
+// Default posture: token required. Tokenless mode is covered separately below.
+const ok = (over = {}) =>
+  authorize({ host: '127.0.0.1:8090', token: TOKEN, givenToken: TOKEN, requireToken: true, ...over })
 
 test('a valid loopback request with the token is allowed', () => {
   assert.deepEqual(ok(), { ok: true, status: 200 })
@@ -47,6 +49,57 @@ test('writes must be JSON, which a cross-origin form cannot send', () => {
     assert.equal(ok({ method: 'POST', contentType: ct }).status, 415, ct)
   }
   assert.equal(ok({ method: 'POST', contentType: undefined }).status, 415)
+})
+
+// ---- cross-site defences, which apply with or without a token -------------
+
+test('a browser saying the request came from another site is refused', () => {
+  for (const site of ['cross-site', 'same-site-typo', 'CROSS-SITE']) {
+    const r = ok({ secFetchSite: site, requireToken: false })
+    assert.equal(r.status, 403, site)
+  }
+})
+
+test('the page itself, and typing the URL, are allowed', () => {
+  for (const site of ['same-origin', 'none', 'same-site']) {
+    assert.equal(ok({ secFetchSite: site, requireToken: false }).ok, true, site)
+  }
+  // curl and other non-browser clients send neither header.
+  assert.equal(ok({ requireToken: false }).ok, true)
+})
+
+test('a non-loopback Origin is refused even when the Host is right', () => {
+  assert.equal(ok({ origin: 'https://evil.example.com', requireToken: false }).status, 403)
+  assert.equal(ok({ origin: 'null', requireToken: false }).status, 403, 'opaque origin')
+  assert.equal(ok({ origin: 'not a url', requireToken: false }).status, 403)
+  assert.equal(ok({ origin: 'http://127.0.0.1:8090', requireToken: false }).ok, true)
+  assert.equal(ok({ origin: 'http://localhost:8090', requireToken: false }).ok, true)
+})
+
+test('without a token, writes still have to be JSON', () => {
+  const r = ok({ requireToken: false, method: 'POST', contentType: 'text/plain' })
+  assert.equal(r.status, 415, 'the last line of defence against a cross-origin form')
+})
+
+test('cross-site is judged before the token, so a probe learns nothing', () => {
+  const r = authorize({
+    host: '127.0.0.1:8090',
+    token: TOKEN,
+    givenToken: 'wrong',
+    secFetchSite: 'cross-site',
+    requireToken: true,
+  })
+  assert.equal(r.status, 403, 'not 401')
+})
+
+test('a missing token is accepted only when it is not required', () => {
+  assert.equal(ok({ givenToken: undefined, requireToken: false }).ok, true)
+  assert.equal(ok({ givenToken: undefined, requireToken: true }).status, 401)
+  // Unspecified means required: a caller that forgets the flag fails closed.
+  assert.equal(
+    authorize({ host: '127.0.0.1:8090', token: TOKEN, givenToken: undefined }).status,
+    401,
+  )
 })
 
 test('tokensMatch rejects length mismatches without throwing', () => {

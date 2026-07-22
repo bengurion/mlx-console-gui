@@ -21,7 +21,8 @@ The same core ships two ways. Pick either, or run both — they cooperate rather
 | --- | --- | --- |
 | **You get** | Activity-bar panels, model search and conversion, chat provider | The same dashboard in a browser, plus terminal commands |
 | **Needs** | VS Code 1.125+ running | Nothing but Node and a venv with mlx-lm |
-| **Interface** | Native panels, optional web dashboard | Web dashboard + `status` / `start` / `stop` |
+| **Interface** | Native panels + web dashboard (on by default) | Web dashboard + `status` / `start` / `stop` |
+| **Dashboard auth** | Cross-site refused; token optional | Same |
 | **Runs at login** | No — dies with the editor | Yes, via launchd |
 | **Settings** | VS Code settings (`mlxConsole.*`) | `~/.mlx-console/config.json` |
 
@@ -38,7 +39,7 @@ flowchart TB
         CLI["mlx-console CLI<br/><i>terminal · launchd</i>"]
     end
 
-    DASH["Web dashboard<br/><i>127.0.0.1 · token</i>"]
+    DASH["Web dashboard<br/><i>127.0.0.1 · same-site only</i>"]
     REG[("server-state.json<br/><i>shared registry</i>")]
     SRV["mlx_lm.server<br/><i>detached process</i>"]
     GPU["Unified memory<br/><i>weights + KV cache</i>"]
@@ -218,46 +219,54 @@ Both packages can serve the same editable dashboard on loopback: settings, live 
 Start / Stop / Restart / Clear & reload. It goes through the same code paths as the VS Code
 panel, so the two cannot drift apart, and it updates a field you are not currently typing in.
 
-**From the extension** — enable `webUi.enabled`, or just run **MLX: Open Web Dashboard
-(local)**, which offers to enable it and then opens your browser on the full URL:
+**From the extension** — it is **on by default**, at a plain, bookmarkable address:
 
 ```
-http://127.0.0.1:8090/?t=Qk3n…       ← generated for you, not something you invent
+http://127.0.0.1:8090
 ```
 
-You never type the token. **MLX: Copy Web Dashboard URL (local)** puts the same URL on the
-clipboard for a different browser. Bookmarking the bare `http://127.0.0.1:8090` will simply
-be refused — once the page is open it holds the token and sends it with every request.
+No token, no query string. **MLX: Open Web Dashboard (local)** opens it, and **MLX: Copy Web
+Dashboard URL (local)** puts it on the clipboard, but you can equally just type it.
 
-The token is fresh on every start and lives only in that VS Code window, so **one window owns
-the dashboard**; a second reports the port busy. Reloading the window mints a new token.
+Each VS Code window serves its own dashboard: the first takes port 8090, the rest quietly
+take an OS-assigned port — which is when the command is genuinely easier than guessing. Set
+`webUi.enabled` to false to turn it off.
 
-**From the CLI** — `mlx-console serve` does the same thing with no editor involved, and
-`mlx-console url` prints the tokenised link.
+**From the CLI** — `mlx-console serve` does the same with no editor involved, and
+`mlx-console url` prints the address.
 
 <details>
-<summary><b>Why a loopback-only page still needs a token</b></summary>
+<summary><b>How a page with no password stays safe</b></summary>
 
-"It only listens on localhost" is not a security boundary in a browser. Any page you have
-open can POST to `127.0.0.1`; CORS hides the *response*, but a fire-and-forget request that
-flips a setting or stops your server succeeds anyway. So:
+"It only listens on localhost" is not a boundary by itself: any page you have open can POST
+to `127.0.0.1`. CORS hides the *response*, but a fire-and-forget request that flips a setting
+or stops your server would succeed anyway. What stops it is that the browser says where the
+request came from, and the page cannot lie about it:
 
-- a **per-session token** on every request;
-- the **`Host` header is validated**, blocking DNS rebinding — and checked *before* the
-  token, so a probe learns nothing about token validity;
-- **writes must be `application/json`**, a content type a cross-origin HTML form physically
-  cannot produce;
-- **secrets are masked** on the way out, and an unchanged `••••••••` is never written back
-  over the real value;
-- the page loads **no external fonts, scripts or styles**, so it works offline and cannot
-  leak the token to a third party.
+- **`Sec-Fetch-Site: cross-site` is refused**, as is an `Origin` that is not loopback. This
+  is the check that makes a tokenless dashboard defensible — a drive-by request from another
+  site carries one or both, and is turned away.
+- **`Host` must be loopback**, which blocks DNS rebinding (a remote origin resolving to
+  127.0.0.1 still sends its own Host).
+- **Writes must be `application/json`** — a content type a cross-origin HTML form physically
+  cannot produce, so even a browser too old to send the headers above cannot submit one.
+- **Secrets are masked** on the way out, and an unchanged `••••••••` is never written back
+  over the real value.
+- The page loads **no external fonts, scripts or styles**, so it works offline and leaks
+  nothing to a third party.
+
+Set **`webUi.requireToken`** to add a per-session token on top. The case for it is other
+people having accounts on the same Mac: a loopback port is reachable by every local user, and
+the checks above do not distinguish between them. The URL then becomes
+`http://127.0.0.1:8090/?t=…`, handed to you by the command.
 
 </details>
 
 > [!IMPORTANT]
 > **This is for your machine only.** The listener binds to `127.0.0.1` in code and
-> deliberately ignores `server.exposeToLan`. There is no setting that widens it, and it is
-> not meant to be put on a network or deployed anywhere. Off by default.
+> deliberately ignores `server.exposeToLan`. There is no setting that widens it, and it is not
+> meant to be put on a network or deployed anywhere. That assumption is exactly what lets it
+> run without a password.
 
 ---
 
@@ -303,12 +312,12 @@ every value in the headless dashboard is tagged `[vscode]`, `[cli]` or `[default
 removes it.
 
 Under launchd there is no terminal to print the URL to, and launchd creates its log files
-world-readable — so the daemon deliberately does **not** write the token to its log. It goes
-to `~/.mlx-console/url` at `0600`:
+world-readable — so with `webUi.requireToken` on, the daemon deliberately does **not** write
+the URL to its log. It goes to `~/.mlx-console/url` at `0600`:
 
 ```console
 $ mlx-console url
-http://127.0.0.1:8090/?t=YUj6U3wU5hgEhzVToVOHn_d_zS7Z6Tpq
+http://127.0.0.1:8090/
 ```
 
 Note what this does *not* do: it serves the dashboard, it does not load a model at boot.
@@ -463,7 +472,7 @@ keys are used by the CLI, without the `mlxConsole.` prefix, in
 `~/.mlx-console/config.json`.
 
 <details>
-<summary><b>All 29 settings</b></summary>
+<summary><b>All 30 settings</b></summary>
 
 <!-- settings:start -->
 
@@ -518,8 +527,9 @@ keys are used by the CLI, without the `mlxConsole.` prefix, in
 
 | Setting | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `webUi.enabled` | boolean | `false` | Serve an editable dashboard on `http://127.0.0.1`. Loopback only — it ignores Expose to LAN and cannot be reached from another machine. |
-| `webUi.port` | number | `8090` | Port for the local dashboard. Use 0 to let the OS pick a free one. Bound to 127.0.0.1 regardless. |
+| `webUi.enabled` | boolean | `true` | Serve an editable dashboard on `http://127.0.0.1`. Loopback only — it ignores Expose to LAN and cannot be reached from another machine. |
+| `webUi.requireToken` | boolean | `false` | Require a per-session token in the dashboard URL. |
+| `webUi.port` | number | `8090` | Port for the local dashboard. Use 0 to let the OS pick a free one. A second VS Code window takes an OS-assigned port automatically rather than failing. |
 
 <!-- settings:end -->
 

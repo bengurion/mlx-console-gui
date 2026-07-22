@@ -267,13 +267,18 @@
         },
         "mlxConsole.webUi.enabled": {
           "type": "boolean",
+          "default": true,
+          "markdownDescription": "Serve an editable dashboard on `http://127.0.0.1`. **Loopback only** — it ignores Expose to LAN and cannot be reached from another machine. Every request needs a per-session token, because any web page open in your browser can send requests to localhost. On by default; run **MLX: Open Web Dashboard (local)** to open it."
+        },
+        "mlxConsole.webUi.requireToken": {
+          "type": "boolean",
           "default": false,
-          "markdownDescription": "Serve an editable dashboard on `http://127.0.0.1`. **Loopback only** — it ignores Expose to LAN and cannot be reached from another machine. Every request needs a per-session token, because any web page open in your browser can send requests to localhost. Off by default."
+          "markdownDescription": "Require a per-session token in the dashboard URL. Off by default: the dashboard already refuses cross-site requests, which is what a malicious web page would have to make. Turn it on if other people have accounts on this Mac — a loopback port is reachable by every local user, and only the token keeps them out."
         },
         "mlxConsole.webUi.port": {
           "type": "number",
           "default": 8090,
-          "markdownDescription": "Port for the local dashboard. Use 0 to let the OS pick a free one. Bound to 127.0.0.1 regardless."
+          "markdownDescription": "Port for the local dashboard. Use 0 to let the OS pick a free one. A second VS Code window takes an OS-assigned port automatically rather than failing. Bound to 127.0.0.1 regardless."
         },
         "mlxConsole.server.extraArgs": {
           "type": "array",

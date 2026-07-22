@@ -90,9 +90,16 @@ export const Config = {
   numDraftTokens(): number {
     return positive(cfg().get<number>('server.numDraftTokens', 0))
   },
-  /** Local dashboard: loopback only, opt-in. */
+  /** Local dashboard: on by default, loopback only, token on every request. */
   webUiEnabled(): boolean {
-    return cfg().get<boolean>('webUi.enabled', false)
+    return cfg().get<boolean>('webUi.enabled', true)
+  },
+  /**
+   * Optional token on the dashboard. The cross-site checks apply regardless;
+   * this is the extra layer for a Mac with other user accounts on it.
+   */
+  webUiRequireToken(): boolean {
+    return cfg().get<boolean>('webUi.requireToken', false)
   },
   webUiPort(): number {
     const n = cfg().get<number>('webUi.port', 8090)

@@ -31,15 +31,18 @@ export interface WebUiDeps {
   notify?(message: string): void
   /** Shown in the page header so you can tell the two dashboards apart. */
   hostLabel?: string
+  /** Demand a token as well as the cross-site checks. Off by default. */
+  requireToken?(): boolean
 }
 
 /**
  * A small editable dashboard on loopback.
  *
- * Off unless enabled. Binds to 127.0.0.1 explicitly — never 0.0.0.0, whatever
- * the server's own LAN setting says, because this endpoint can change settings
- * and stop processes. Every request carries a token generated per session; see
- * `webUi.ts` for why localhost alone is not a boundary.
+ * Binds to 127.0.0.1 explicitly — never 0.0.0.0, whatever the server's own LAN
+ * setting says, because this endpoint can change settings and stop processes.
+ * Cross-site requests are refused whatever the settings say; a per-session
+ * token is available on top. See `webUi.ts` for why localhost alone is not a
+ * boundary.
  */
 export class WebUiServer {
   private server: http.Server | undefined
@@ -48,20 +51,37 @@ export class WebUiServer {
 
   constructor(private readonly deps: WebUiDeps) {}
 
+  /**
+   * The address to open. The token is only in the URL when it is required —
+   * otherwise this is a plain, bookmarkable, paste-anywhere localhost link.
+   */
   get url(): string | undefined {
-    return this.port ? `http://127.0.0.1:${this.port}/?t=${this.token}` : undefined
+    if (!this.port) return undefined
+    const base = `http://127.0.0.1:${this.port}/`
+    return this.deps.requireToken?.() ? `${base}?t=${this.token}` : base
   }
 
-  async start(port: number): Promise<string | undefined> {
+  /**
+   * Listen, and say where.
+   *
+   * `onBusy: 'ephemeral'` is what every window past the first does: each window
+   * has its own token and cannot share another's dashboard, so competing for
+   * one port would mean all but one window has no dashboard at all. Taking an
+   * OS-assigned port instead means every window has a working one — you reach
+   * it through the palette command, which knows its own port.
+   */
+  async start(port: number, opts: { onBusy?: 'ephemeral' | 'fail' } = {}): Promise<string | undefined> {
     await this.stop()
     const server = http.createServer((req, res) => void this.handle(req, res))
 
     return new Promise((resolve) => {
       server.on('error', (err) => {
-        this.deps.log.error(`Web UI could not listen on ${port}`, err)
-        // Each window has its own token, so a second window cannot share the
-        // first one's dashboard — say so rather than reporting a raw errno.
         const busy = (err as NodeJS.ErrnoException).code === 'EADDRINUSE'
+        if (busy && opts.onBusy === 'ephemeral' && port !== 0) {
+          this.deps.log.info(`Web UI port ${port} is taken; using an OS-assigned port instead`)
+          return void this.start(0, { onBusy: 'fail' }).then(resolve)
+        }
+        this.deps.log.error(`Web UI could not listen on ${port}`, err)
         this.deps.notify?.(
           busy
             ? `MLX: port ${port} is already in use — another VS Code window or the headless daemon may already be serving the dashboard. Open it from there, or change Web Ui: Port.`
@@ -74,7 +94,10 @@ export class WebUiServer {
         this.server = server
         const addr = server.address()
         this.port = typeof addr === 'object' && addr ? addr.port : port
-        this.deps.log.info(`Web UI listening on http://127.0.0.1:${this.port} (token required)`)
+        this.deps.log.info(
+          `Web UI listening on http://127.0.0.1:${this.port}` +
+            (this.deps.requireToken?.() ? ' (token required)' : ''),
+        )
         resolve(this.url)
       })
     })
@@ -97,6 +120,9 @@ export class WebUiServer {
       givenToken: url.searchParams.get('t') ?? (req.headers['x-mlx-token'] as string | undefined),
       method: req.method,
       contentType: req.headers['content-type'],
+      secFetchSite: req.headers['sec-fetch-site'] as string | undefined,
+      origin: req.headers.origin as string | undefined,
+      requireToken: this.deps.requireToken?.() ?? false,
     })
     if (!auth.ok) {
       res.writeHead(auth.status, { 'content-type': 'text/plain' })
