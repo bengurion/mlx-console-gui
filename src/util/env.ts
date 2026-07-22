@@ -1,7 +1,7 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { Config } from '../config'
-import { log } from '../core/logging'
+import { Config } from '../config.ts'
+import { log } from '../core/logging.ts'
 
 /**
  * Process env for every Python subprocess we spawn (server + helper).

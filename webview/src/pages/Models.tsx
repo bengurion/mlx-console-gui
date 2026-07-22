@@ -72,13 +72,22 @@ export function ModelsPage() {
           // the model is not already loaded or mid-load.
           const loaded = server?.modelState === 'loaded' && server.loadedModel === m.repo
           const loading = server?.modelState === 'loading' && active
+          // A load in progress anywhere blocks every launch button: the server
+          // holds one model, so a second load would queue behind the first and
+          // then displace it — minutes of work to end up somewhere unexpected.
+          const otherLoading = server?.modelState === 'loading' && !active
+          const willDisplace = Boolean(server?.loadedModel) && !loaded
           const launchLabel = working
             ? 'Working…'
             : loading
               ? 'Loading…'
               : loaded
-                ? 'Running'
-                : 'Launch'
+                ? 'Resident'
+                : otherLoading
+                  ? 'Wait…'
+                  : willDisplace
+                    ? 'Switch to this'
+                    : 'Launch'
           return (
             <div key={m.repo} className={`card col${active ? ' active' : ''}`}>
               <div className="row spread">
@@ -92,13 +101,17 @@ export function ModelsPage() {
               </div>
               <div className="row wrap">
                 <button
-                  disabled={working || loaded || loading}
+                  disabled={working || loaded || loading || otherLoading}
                   title={
                     loaded
-                      ? 'Already resident in memory — use Unload & clear in Metrics to free it.'
+                      ? 'Already resident — loading it again would re-read the same weights.'
                       : loading
                         ? 'Weights are being read into memory.'
-                        : 'Load this model into the server.'
+                        : otherLoading
+                          ? `Waiting for ${server?.activeModel ?? 'another model'} to finish loading.`
+                          : willDisplace
+                            ? `Loads this model, dropping ${server?.loadedModel} from memory.`
+                            : 'Starts the server if needed, then loads this model.'
                   }
                   onClick={() => act(m.repo, 'launchModel')}
                 >

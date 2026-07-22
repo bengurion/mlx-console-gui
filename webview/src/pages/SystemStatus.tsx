@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { rpc, onPush } from '../api'
 import { InlineSetting } from './InlineSetting'
-import type { EnvStatusLite, ServerStatusLite } from '../../../src/shared/protocol'
+import type { EnvStatusLite, LocalModel, ServerStatusLite } from '../../../src/shared/protocol'
 
 /**
  * Environment, storage and server control.
@@ -14,14 +14,27 @@ import type { EnvStatusLite, ServerStatusLite } from '../../../src/shared/protoc
 export function SystemStatus() {
   const [server, setServer] = useState<ServerStatusLite>()
   const [env, setEnv] = useState<EnvStatusLite>()
+  const [models, setModels] = useState<LocalModel[]>([])
+  const [choice, setChoice] = useState('')
   const [busy, setBusy] = useState(false)
 
   useEffect(() => onPush<ServerStatusLite>('serverStatus', setServer), [])
   useEffect(() => onPush<EnvStatusLite>('envStatus', setEnv), [])
+  useEffect(() => onPush<LocalModel[]>('models', setModels), [])
   useEffect(() => {
     void rpc<ServerStatusLite>('getServerStatus').then(setServer).catch(() => undefined)
     void rpc<EnvStatusLite>('getEnvStatus').then(setEnv).catch(() => undefined)
+    void rpc<LocalModel[]>('listModels').then(setModels).catch(() => undefined)
   }, [])
+
+  // Default the choice to whatever is already loaded or selected, so the
+  // button describes the obvious action rather than an arbitrary first entry.
+  useEffect(() => {
+    if (choice) return
+    const preferred = server?.loadedModel ?? server?.activeModel
+    if (preferred && models.some((m) => m.repo === preferred)) setChoice(preferred)
+    else if (models.length) setChoice(models[0].repo)
+  }, [models, server?.loadedModel, server?.activeModel, choice])
 
   const call = async (method: Parameters<typeof rpc>[0]) => {
     setBusy(true)
@@ -32,7 +45,18 @@ export function SystemStatus() {
     }
   }
 
+  async function launch() {
+    setBusy(true)
+    try {
+      await rpc('launchModel', { repo: choice })
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const running = server?.state === 'ready' || server?.state === 'starting'
+  const isResident = server?.modelState === 'loaded' && server.loadedModel === choice
+  const loading = server?.modelState === 'loading'
 
   return (
     <>
@@ -41,17 +65,47 @@ export function SystemStatus() {
           <strong>Server</strong>
           <span className="badge">{server?.state ?? 'stopped'}</span>
         </div>
-        {server?.activeModel && <div className="small muted">Model: {server.activeModel}</div>}
         {server?.detail && <div className="small muted">{server.detail}</div>}
         <ModelResidency server={server} />
-        <div className="row wrap">
-          {running ? (
+
+        {/*
+          Starting the server on its own leaves it idle — it loads nothing
+          until a request names a model. So the choice is made here, and the
+          button does both: start if needed, then load.
+        */}
+        <div className="row wrap" style={{ gap: 6 }}>
+          <select
+            value={choice}
+            disabled={loading}
+            onChange={(e) => setChoice(e.target.value)}
+            style={{ flex: '1 1 220px', minWidth: 0 }}
+          >
+            {models.length === 0 && <option value="">No models downloaded</option>}
+            {models.map((m) => (
+              <option key={m.repo} value={m.repo}>
+                {m.repo}
+                {m.repo === server?.loadedModel ? ' — resident' : ''}
+              </option>
+            ))}
+          </select>
+
+          <button
+            disabled={busy || loading || !choice || isResident}
+            title={
+              isResident
+                ? 'Already resident — loading it again would re-read the same weights.'
+                : server?.loadedModel
+                  ? `Loads ${choice}, dropping ${server.loadedModel} from memory.`
+                  : 'Starts the server if needed, then loads this model.'
+            }
+            onClick={() => void launch()}
+          >
+            {loading ? 'Loading…' : isResident ? 'Resident' : server?.loadedModel ? 'Switch' : 'Start & load'}
+          </button>
+
+          {running && (
             <button className="secondary" disabled={busy} onClick={() => call('stopServer')}>
               Stop
-            </button>
-          ) : (
-            <button disabled={busy} onClick={() => call('startServer')}>
-              Start
             </button>
           )}
           <button className="secondary" disabled={busy} onClick={() => call('restartServer')}>

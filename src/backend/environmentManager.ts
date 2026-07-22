@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { log } from '../core/logging'
-import { Emitter } from '../core/events'
+import { log } from '../core/logging.ts'
+import { Emitter } from '../core/events.ts'
 
 /**
  * What the environment manager needs from whichever host is running it.
@@ -23,7 +23,7 @@ export interface EnvHost {
   reportInfo?(message: string): void
   progress?<T>(title: string, task: (report: (message: string) => void) => Promise<T>): Promise<T>
 }
-import { Config } from '../config'
+import { Config } from '../config.ts'
 
 export interface EnvStatus {
   platformOk: boolean

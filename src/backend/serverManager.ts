@@ -1,20 +1,20 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { Emitter, disposeAll, type Disposable } from '../core/events'
-import { log } from '../core/logging'
-import { Config } from '../config'
-import { mlxProcessEnv } from '../util/env'
-import type { EnvironmentManager } from './environmentManager'
-import { MlxClient } from './mlxClient'
-import { buildServerArgs } from './serverArgs'
+import { Emitter, disposeAll, type Disposable } from '../core/events.ts'
+import { log } from '../core/logging.ts'
+import { Config } from '../config.ts'
+import { mlxProcessEnv } from '../util/env.ts'
+import type { EnvironmentManager } from './environmentManager.ts'
+import { MlxClient } from './mlxClient.ts'
+import { buildServerArgs } from './serverArgs.ts'
 import {
   isUsableState,
   parseState,
   pidAlive,
   serializeState,
   type SharedServerState,
-} from './serverRegistry'
+} from './serverRegistry.ts'
 
 export type ServerState = 'stopped' | 'starting' | 'ready' | 'error'
 
@@ -92,7 +92,10 @@ export class ServerManager {
 
   readonly client: MlxClient
 
-  constructor(private readonly env: EnvironmentManager) {
+  private readonly env: EnvironmentManager
+
+  constructor(env: EnvironmentManager) {
+    this.env = env
     this.client = new MlxClient({
       baseUrl: () => this.baseUrl(),
       apiKey: () => Config.apiKey(),
@@ -410,14 +413,41 @@ export class ServerManager {
    * Pre-warm a model so the first chat is fast. The server loads a model on the
    * first request that references it; a tiny completion triggers that load.
    */
+  /** In-flight loads, so a second request for the same model joins the first. */
+  private warmUps = new Map<string, Promise<boolean>>()
+
   async warmUp(model: string): Promise<boolean> {
-    if (!(await this.ensureRunning(false))) return false
-    try {
+    // Already resident: re-requesting would reload the same weights, which for
+    // a large model is minutes of work to arrive back where we started.
+    if (this._modelState === 'loaded' && this._loadedModel === model) {
       this.setActiveModel(model)
+      return true
+    }
+    const existing = this.warmUps.get(model)
+    if (existing) return existing
+
+    const load = this.warmUpNow(model).finally(() => this.warmUps.delete(model))
+    this.warmUps.set(model, load)
+    return load
+  }
+
+  private async warmUpNow(model: string): Promise<boolean> {
+    if (!(await this.ensureRunning(false))) return false
+
+    /*
+     * Announce the load before making the request, and confirm it after.
+     * Without this the status stayed 'none' for the whole load — minutes, for
+     * a large model — so every view still offered a Launch button and a second
+     * click queued a second load of the same weights.
+     */
+    this.beginModelUse(model)
+    try {
       await this.client.chat({ model, messages: [{ role: 'user', content: 'ok' }], max_tokens: 1 })
+      this.confirmModelLoaded(model)
       return true
     } catch (err) {
       log.warn(`warmUp failed for ${model}`, err)
+      this.abortModelLoad()
       return false
     }
   }
