@@ -295,6 +295,16 @@
           "default": 8090,
           "markdownDescription": "Port for the local dashboard. Use 0 to let the OS pick a free one. A second VS Code window takes an OS-assigned port automatically rather than failing. Bound to 127.0.0.1 regardless."
         },
+        "mlxConsole.cleanEndpoint.enabled": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Serve a second OpenAI endpoint that strips the harmony format gpt-oss models emit. Other clients otherwise show the model's private reasoning and control tokens as part of the answer. Loopback only; the raw server stays available unchanged."
+        },
+        "mlxConsole.cleanEndpoint.port": {
+          "type": "number",
+          "default": 8082,
+          "markdownDescription": "Port for the filtered endpoint. Use 0 to let the OS pick a free one."
+        },
         "mlxConsole.server.extraArgs": {
           "type": "array",
           "items": {

@@ -53,6 +53,8 @@ export interface HubDeps {
     contributes?: { configuration?: { properties?: Record<string, ConfigProperty> } }
   }
   extensionUri: { fsPath: string }
+  /** URL of the harmony-filtering endpoint, when the host runs one. */
+  cleanEndpointUrl?(): string | undefined
   /** How to ask the user things. Omitted in headless, where nobody is asked. */
   host?: HubHost
 }
@@ -746,6 +748,11 @@ export class WebviewHub {
 
   private externalClients(): ExternalClientsInfo {
     const baseUrl = this.deps.server.advertisedBaseUrl()
+    // Prefer the filtered endpoint in the snippets when it is running: for a
+    // gpt-oss model it is the difference between an answer and an answer with
+    // the model's reasoning stapled to the front.
+    const cleanUrl = this.deps.cleanEndpointUrl?.()
+    const clientUrl = cleanUrl ?? baseUrl
     const model = this.deps.server.activeModel || Config.defaultModel() || FALLBACK_MODEL
     const hasApiKey = Boolean(Config.apiKey())
     const opencode = JSON.stringify(
@@ -754,7 +761,7 @@ export class WebviewHub {
           mlx: {
             npm: '@ai-sdk/openai-compatible',
             name: 'MLX (local)',
-            options: { baseURL: baseUrl },
+            options: { baseURL: clientUrl },
             models: { [model]: {} },
           },
         },
@@ -776,7 +783,7 @@ export class WebviewHub {
     const copilot = [
       'Chat model picker → Manage Models → OpenAI Compatible',
       '',
-      `Base URL: ${baseUrl}`,
+      `Base URL: ${clientUrl}`,
       `API key:  ${key}`,
       `Model id: ${model}`,
       '',
@@ -804,7 +811,7 @@ export class WebviewHub {
       '  - name: MLX (local)',
       '    provider: openai',
       `    model: ${model}`,
-      `    apiBase: ${baseUrl}`,
+      `    apiBase: ${clientUrl}`,
       `    apiKey: ${hasApiKey ? '<your configured key>' : 'unused'}`,
       '',
       '# Cline, Roo and most other extensions: choose the "OpenAI Compatible"',
@@ -812,7 +819,7 @@ export class WebviewHub {
     ].join('\n')
 
     const curl = [
-      `curl ${baseUrl}/chat/completions \\`,
+      `curl ${clientUrl}/chat/completions \\`,
       "  -H 'Content-Type: application/json' \\",
       `  -H 'Authorization: Bearer ${hasApiKey ? '<your configured key>' : 'x'}' \\`,
       `  -d '${JSON.stringify({ model, messages: [{ role: 'user', content: 'hello' }] })}'`,
@@ -842,6 +849,7 @@ export class WebviewHub {
 
     return {
       baseUrl,
+      cleanUrl,
       activeModel: this.deps.server.activeModel,
       hasApiKey,
       exposeToLan: Config.exposeToLan(),

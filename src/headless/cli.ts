@@ -32,6 +32,7 @@ import { CacheService } from '../services/cacheService'
 import { DownloadManager } from '../services/downloadManager'
 import { MetricsService } from '../services/metricsService'
 import { WebviewHub } from '../ui/webview/webviewHub'
+import { HarmonyProxy } from '../services/harmonyProxy'
 import { StoreSettings, headlessEnvHost, headlessHubHost, storageDir } from './headlessHost'
 import { PythonBridge, findBundle, findHelper, selfPath } from './pythonBridge'
 import type { LocalModel } from '../shared/protocol'
@@ -237,6 +238,10 @@ function buildApp(settings: SettingsStore, helper: string | undefined) {
 
   const python = helper ? new PythonHelper(env, helper) : undefined
   const metrics = new MetricsService(env, server)
+
+  // Same filtered endpoint the extension offers, for the same reason: without
+  // it, a gpt-oss answer arrives with the model's reasoning in front of it.
+  const cleanEndpoint = new HarmonyProxy({ upstream: () => server.baseUrl() })
   const hub = python
     ? new WebviewHub({
         env,
@@ -248,11 +253,12 @@ function buildApp(settings: SettingsStore, helper: string | undefined) {
         packageJSON: pkg,
         extensionUri: { fsPath: dir },
         host: headlessHubHost(),
+        cleanEndpointUrl: () => cleanEndpoint.url,
       })
     : undefined
 
   void env.refresh()
-  return { env, server, metrics, hub }
+  return { env, server, metrics, hub, cleanEndpoint }
 }
 
 /** How long a graceful exit waits before quitting regardless. */
@@ -273,6 +279,11 @@ async function serve(port?: number, keepServer = false): Promise<void> {
   const helper = findHelper()
   const bundle = findBundle()
   const app = buildApp(settings, helper)
+  if (settings.get<boolean>('cleanEndpoint.enabled', false)) {
+    const port = Number(settings.get('cleanEndpoint.port', 8082))
+    const url = await app.cleanEndpoint.start(Number.isFinite(port) ? port : 8082)
+    if (url) log.info(`Filtered endpoint on ${url}`)
+  }
   const fullUi = Boolean(app.hub && bundle)
   if (!fullUi) {
     // Say exactly what was missing and where we looked: the usual cause is
@@ -374,6 +385,7 @@ async function serve(port?: number, keepServer = false): Promise<void> {
     clearUrlFile()
     const done = () => process.exit(0)
     void (async () => {
+      await app.cleanEndpoint.stop()
       if (!keepServer) {
         const { stopped, forced } = await server.stopAll()
         const total = stopped.length + forced.length

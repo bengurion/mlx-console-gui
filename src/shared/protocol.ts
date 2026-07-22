@@ -246,6 +246,14 @@ export interface EnvStatusLite {
 
 export interface ExternalClientsInfo {
   baseUrl: string
+  /**
+   * A second endpoint that strips the harmony format, when enabled.
+   *
+   * Advertised separately from `baseUrl` because which one a client should use
+   * depends on the model: only gpt-oss-family models emit harmony, and for
+   * everything else the two are identical.
+   */
+  cleanUrl?: string
   activeModel?: string
   hasApiKey: boolean
   exposeToLan: boolean

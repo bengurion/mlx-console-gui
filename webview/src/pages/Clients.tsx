@@ -37,9 +37,23 @@ export function ClientsPage() {
           An ordinary OpenAI-compatible API. Anything that speaks it can use this server.
         </div>
         <div className="row spread">
-          <code className="small">{ext.baseUrl}</code>
-          <a onClick={() => copy(ext.baseUrl)}>Copy</a>
+          <code className="small">{ext.cleanUrl ?? ext.baseUrl}</code>
+          <a onClick={() => copy(ext.cleanUrl ?? ext.baseUrl)}>Copy</a>
         </div>
+        {ext.cleanUrl ? (
+          /* The snippets below use this one, so say why it differs from the
+             server's own port before someone "corrects" it. */
+          <div className="small muted">
+            This is the filtered endpoint. It forwards to <code>{ext.baseUrl}</code> and strips the
+            harmony channels gpt-oss models emit, so the answer arrives without the model's
+            reasoning in front of it. The raw server stays available on its own port.
+          </div>
+        ) : (
+          <div className="small muted">
+            Using a gpt-oss model? Enable <code>cleanEndpoint</code> in Settings — otherwise
+            clients receive the model's reasoning channel as part of every answer.
+          </div>
+        )}
         <div className="small muted">
           {ext.hasApiKey
             ? 'An API key is configured — clients must send it as a bearer token.'

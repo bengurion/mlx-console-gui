@@ -22,6 +22,7 @@ import { registerLmChatProvider } from './chat/lmChatProvider'
 import { registerTools } from './chat/tools'
 import { MetricsService } from './services/metricsService'
 import { WebUiServer } from './services/webUiServer'
+import { HarmonyProxy } from './services/harmonyProxy'
 import { ReviewService } from './features/reviewService'
 
 /**
@@ -83,6 +84,13 @@ export async function activate(context: vscode.ExtensionContext) {
   const convert = new ConvertManager(env, server)
   const metrics = new MetricsService(env, server)
   metrics.elevate = vscodeElevate
+
+  /*
+   * A second endpoint that filters harmony out of responses, so clients other
+   * than this extension see the answer rather than the model's reasoning and
+   * control tokens. Off by default; the raw server is untouched either way.
+   */
+  const cleanEndpoint = new HarmonyProxy({ upstream: () => server.baseUrl() })
   const hub = new WebviewHub({
     env,
     server,
@@ -93,6 +101,7 @@ export async function activate(context: vscode.ExtensionContext) {
     packageJSON: context.extension.packageJSON,
     extensionUri: context.extensionUri,
     host: vscodeHubHost(),
+    cleanEndpointUrl: () => cleanEndpoint.url,
   })
 
   context.subscriptions.push(
@@ -137,6 +146,14 @@ export async function activate(context: vscode.ExtensionContext) {
     },
   })
   context.subscriptions.push(webUi)
+
+  context.subscriptions.push({ dispose: () => void cleanEndpoint.stop() })
+
+  const syncCleanEndpoint = async () => {
+    if (Config.cleanEndpointEnabled()) await cleanEndpoint.start(Config.cleanEndpointPort())
+    else await cleanEndpoint.stop()
+  }
+  void syncCleanEndpoint()
 
   const syncWebUi = async () => {
     // Enabled by default, so a busy port is the normal case in a second window
@@ -240,6 +257,7 @@ export async function activate(context: vscode.ExtensionContext) {
       // Model metadata is looked up under modelsDir, so its caches must go.
       if (e.affectsConfiguration('mlxConsole.modelsDir')) hub.refreshModelProfile()
       if (e.affectsConfiguration('mlxConsole.webUi')) void syncWebUi()
+      if (e.affectsConfiguration('mlxConsole.cleanEndpoint')) void syncCleanEndpoint()
       const serverAffecting =
         e.affectsConfiguration('mlxConsole.server') || e.affectsConfiguration('mlxConsole.modelsDir')
       if (serverAffecting && (server.state === 'ready' || server.state === 'starting')) {

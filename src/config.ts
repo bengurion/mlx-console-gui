@@ -108,6 +108,14 @@ export const Config = {
   webUiRequireToken(): boolean {
     return cfg().get<boolean>('webUi.requireToken', false)
   },
+  /** Second endpoint that filters harmony out for other clients. */
+  cleanEndpointEnabled(): boolean {
+    return cfg().get<boolean>('cleanEndpoint.enabled', false)
+  },
+  cleanEndpointPort(): number {
+    const n = cfg().get<number>('cleanEndpoint.port', 8082)
+    return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 8082
+  },
   webUiPort(): number {
     const n = cfg().get<number>('webUi.port', 8090)
     return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 8090

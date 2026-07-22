@@ -512,7 +512,7 @@ keys are used by the CLI, without the `mlxConsole.` prefix, in
 `~/.mlx-console/config.json`.
 
 <details>
-<summary><b>All 30 settings</b></summary>
+<summary><b>All 32 settings</b></summary>
 
 <!-- settings:start -->
 
@@ -570,6 +570,13 @@ keys are used by the CLI, without the `mlxConsole.` prefix, in
 | `webUi.enabled` | boolean | `true` | Serve an editable dashboard on `http://127.0.0.1`. Loopback only — it ignores Expose to LAN and cannot be reached from another machine. |
 | `webUi.requireToken` | boolean | `false` | Require a per-session token in the dashboard URL. |
 | `webUi.port` | number | `8090` | Port for the local dashboard. Use 0 to let the OS pick a free one. A second VS Code window takes an OS-assigned port automatically rather than failing. |
+
+#### cleanEndpoint
+
+| Setting | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `cleanEndpoint.enabled` | boolean | `false` | Serve a second OpenAI endpoint that strips the harmony format gpt-oss models emit. |
+| `cleanEndpoint.port` | number | `8082` | Port for the filtered endpoint. Use 0 to let the OS pick a free one. |
 
 <!-- settings:end -->
 
