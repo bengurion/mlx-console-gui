@@ -36,12 +36,25 @@ export class HarmonyProxy {
     return this.port ? `http://127.0.0.1:${this.port}/v1` : undefined
   }
 
-  async start(port: number): Promise<string | undefined> {
+  /**
+   * Listen, taking another port if this one is busy.
+   *
+   * A second host — the extension alongside the daemon — wants its own proxy,
+   * and the previous behaviour was to log an error and carry on with no proxy
+   * at all. Clients then pointed at a port serving nothing, or at the raw
+   * server, and saw harmony markup with no clue why.
+   */
+  async start(port: number, opts: { onBusy?: 'ephemeral' | 'fail' } = {}): Promise<string | undefined> {
     await this.stop()
     const server = http.createServer((req, res) => void this.handle(req, res))
 
     return new Promise((resolve) => {
       server.on('error', (err) => {
+        const busy = (err as NodeJS.ErrnoException).code === 'EADDRINUSE'
+        if (busy && opts.onBusy !== 'fail' && port !== 0) {
+          log.info(`Filtered endpoint port ${port} is taken; using an OS-assigned port instead`)
+          return void this.start(0, { onBusy: 'fail' }).then(resolve)
+        }
         log.error(`Harmony proxy could not listen on ${port}`, err)
         resolve(undefined)
       })
