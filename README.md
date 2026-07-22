@@ -146,6 +146,29 @@ Everything is editable there — the same settings, the same Start / Stop / Rest
 Clear & reload buttons, going through the same code paths as the panel, so the two cannot
 drift apart. `webUi.port` changes the port; `0` lets the OS pick a free one.
 
+#### VS Code has to be running
+
+The dashboard is served *by* the extension, inside VS Code's extension host. There is no
+headless or CLI mode: quit VS Code and port 8090 goes with it. A window minimised in the
+background is enough — the extension activates on startup, and you do not need the panel
+open or a folder loaded — but something has to be running.
+
+**The model server is not affected by this.** `mlx_lm.server` is spawned detached, in its
+own process group, so it keeps serving `http://127.0.0.1:8080/v1` after you close the
+window that started it, and the next window you open reattaches to it rather than starting
+a second copy. Closing VS Code costs you the dashboard, not your loaded model — which also
+means nothing frees that memory until you stop the server, from any window or with `kill`.
+
+If you want inference with no editor in the loop at all, you do not need this extension for
+that — run the server yourself and point any OpenAI-compatible client at it:
+
+```sh
+mlx_lm.server --model <path-or-hf-id> --port 8080
+```
+
+What you lose is everything the extension adds around it: the pre-flight memory check, the
+live headroom and KV-cost figures, and the model management.
+
 **This is for your machine only.** The listener binds to `127.0.0.1` in code and
 deliberately ignores `server.exposeToLan` — there is no setting that widens it, and it is
 not meant to be put on a network or deployed anywhere.
