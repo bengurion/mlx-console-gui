@@ -4,15 +4,11 @@
   "description": "Run and manage mlx-lm's local OpenAI-compatible server on Apple Silicon: download, convert and serve MLX models, watch GPU and memory use, and connect any OpenAI-compatible client, including VS Code chat.",
   "version": "0.0.17",
   "publisher": "mlx-console",
+  "author": {
+    "name": "bengurion",
+    "url": "https://github.com/bengurion"
+  },
   "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/bengurion/mlx_console_vscode.git"
-  },
-  "bugs": {
-    "url": "https://github.com/bengurion/mlx_console_vscode/issues"
-  },
-  "homepage": "https://github.com/bengurion/mlx_console_vscode#readme",
   "icon": "resources/icon.png",
   "engines": {
     "vscode": "^1.125.0",

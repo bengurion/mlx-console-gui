@@ -1,125 +1,166 @@
-# MLX Console for VsCode
+# MLX Console for VS Code
 
-A VS Code front end for [mlx-lm](https://github.com/ml-explore/mlx-lm)'s local server on
-Apple Silicon. It runs and supervises `mlx_lm.server`, manages the models it serves, and
-shows what that costs in memory.
+**Run large language models locally on your Mac, without leaving the editor.**
 
-- **Run the server** — start, stop and supervise `mlx_lm.server`, with its OpenAI-compatible
-  endpoint at `http://127.0.0.1:8080/v1` for any client that speaks it.
-- **Manage models** — search Hugging Face (filtered to what mlx-lm can actually run),
-  download, convert to MLX at a quantization that fits the machine, launch, and delete.
-- **See the cost** — live CPU, unified-memory and GPU figures, which model is resident,
-  how long it took to load, and how much room is left before it swaps.
-- **Configure without leaving the panel** — every setting is editable in place, with values
-  such as the context window read from the model's own `config.json`.
-- **Use it in the editor, if you want** — served models also appear in the VS Code model
-  picker and as the `@mlx` chat participant. That is one client among several, not the
-  point of the extension.
+MLX Console is a front end for [mlx-lm](https://github.com/ml-explore/mlx-lm)'s inference
+server. It starts and supervises `mlx_lm.server`, manages the models that server loads, and
+tells you honestly what those models cost in memory — before they take your machine down
+with them.
 
-## Download
+If you have used mlx-lm from the terminal, you know the loop: one window running the
+server, another for `huggingface-cli`, a browser tab open on the Hub trying to work out
+whether a 120B model will actually fit in 128 GB. This collapses that into one panel.
 
-**[Download mlx-console-vscode-0.0.17.vsix](https://github.com/bengurion/mlx_console_vscode/releases/latest/download/mlx-console-vscode-0.0.17.vsix)** — latest release
+---
 
-Then install it:
+## Why this exists
 
-```bash
-code --install-extension ~/Downloads/mlx-console-vscode-0.0.17.vsix
-```
+Running a big model on Apple Silicon is mostly a memory problem, and the tooling is quiet
+about it. A few things this project learned the hard way, and now surfaces:
 
-Or from the Extensions view: **⋯ → Install from VSIX…**
+- **Your GPU ceiling is not 100% of RAM.** Metal reports a
+  `max_recommended_working_set_size` — on a 128 GB M5 Max that is **107.5 GB**, not 128.
+  Most "will it fit?" advice online uses a fraction-of-RAM guess instead.
+- **KV cache is not free.** At a 131,072-token context, gpt-oss-120b needs ~72 KiB **per
+  token** of cache on top of its weights — about 9.7 GB. That is the difference between a
+  model that loads and one that swaps.
+- **`mlx_lm.server` never unloads.** It keeps exactly one model resident, loads it lazily
+  inside the first request, and evicts only when a different model displaces it. There is
+  no idle timeout, and no endpoint to ask what is loaded.
+- **Its defaults assume a shared server.** `--decode-concurrency` defaults to **32**
+  parallel sequences. On a single-user laptop with a large model, that is a lot of KV cache
+  for requests that will never arrive.
 
-Reload the window afterwards. Every release is also listed on the
-[releases page](https://github.com/bengurion/mlx_console_vscode/releases).
+The extension measures these rather than guessing, and says what it is doing.
+
+---
+
+## What it does
+
+**Run the server** — start, stop and supervise `mlx_lm.server`. Its OpenAI-compatible
+endpoint lives at `http://127.0.0.1:8080/v1` for any client that speaks the protocol.
+
+**Manage models** — search Hugging Face filtered to what mlx-lm can genuinely run
+(GGUF and `.bin`-only repos are marked unusable rather than silently failing later),
+download with progress, convert to MLX at the best quantization that fits your machine,
+launch, and delete.
+
+**See the cost** — live CPU, unified memory and GPU utilisation; which model is resident
+and how long it took to load; how much headroom is left; and a per-model breakdown of
+context window, KV cost per token, weight size and vocabulary, read from the model's own
+`config.json`.
+
+**Configure without leaving the panel** — every setting is editable in place, with sizes
+in MB/GB rather than raw bytes. Values the model knows about itself — context window,
+sampling defaults, max output tokens — are read from its files, and anything you set
+explicitly always wins.
+
+**Use it in the editor, if you want** — served models appear in the VS Code model picker
+and as the `@mlx` chat participant, forwarding native and MCP tools. That is one client of
+the server, not the point of the extension.
+
+---
 
 ## Requirements
 
-- macOS on Apple Silicon (arm64) — the extension checks for `darwin`/`arm64` and will not
-  run elsewhere
-- Python 3 (the extension creates its own virtual environment and installs `mlx-lm`)
+- **macOS on Apple Silicon (arm64).** The extension checks for `darwin`/`arm64` and will
+  not run elsewhere — MLX is Apple-only.
+- **Python 3.** The extension creates and manages its own virtual environment and installs
+  `mlx-lm` into it. Nothing is installed globally.
+- **VS Code 1.125+**, for the language model chat provider API.
+- **Disk.** Models are large; a 120B model at 4-bit is around 60 GB.
+
+---
+
+## Install
+
+No marketplace release yet — build it from source:
+
+```bash
+git clone <this-repo>
+cd mlx_console_vscode
+npm install
+npm run vsce:package
+code --install-extension "$(ls -t mlx-console-vscode-*.vsix | head -1)" --force
+```
+
+Reload the VS Code window afterwards, then open the **MLX Console** icon in the activity
+bar. First run offers to set up the Python environment for you.
+
+If `code` is not on your `PATH` — common when VS Code was installed by dragging it to
+`/Applications` — run **Shell Command: Install 'code' command in PATH** from the command
+palette, or use the binary inside the app bundle:
+
+```bash
+"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" \
+  --install-extension mlx-console-vscode-0.0.17.vsix --force
+```
+
+---
 
 ## Development
 
 ```bash
 npm install
-npm run compile      # or: npm run watch
+npm run watch        # or: npm run compile
 npm run typecheck
-npm test
+npm test             # 112 unit tests, no VS Code host required
 ```
 
-Press `F5` in VS Code to launch an Extension Development Host.
+Press `F5` to launch an Extension Development Host.
 
-## Building a .vsix from the CLI
+The tests deliberately cover the parts that are easy to get quietly wrong — parsing
+`vm_stat` and `ioreg` output, KV-cache arithmetic under grouped-query attention, harmony
+channel parsing, and the memory estimators — rather than the UI wiring.
+
+### Building a .vsix
 
 `npm run vsce:package` syncs the version references in this README from `package.json`,
-runs a production esbuild, then `vsce package --no-dependencies`, writing
-`mlx-console-vscode-<version>.vsix` in the repo root. The README download link therefore
-always names the version you just built — never edit those by hand.
+runs a production esbuild, then `vsce package --no-dependencies`.
 
 ```bash
-# 1. bump the version — vsce refuses to overwrite an existing .vsix
-npm version patch --no-git-tag-version     # or edit "version" in package.json
-
-# 2. verify before packaging (vsce does not run these)
-npm run typecheck && npm test
-
-# 3. build + package
+npm version patch --no-git-tag-version   # vsce refuses to overwrite an existing .vsix
+npm run typecheck && npm test            # vsce does not run these for you
 npm run vsce:package
-
-# 4. inspect what actually shipped
-unzip -l mlx-console-vscode-*.vsix
-```
-
-Install the result:
-
-```bash
-code --install-extension "$(ls -t mlx-console-vscode-*.vsix | head -1)" --force
-code --list-extensions --show-versions | grep mlx-console-vscode   # confirm which build is live
-```
-
-If `code` is not on your `PATH` (common when VS Code was installed by dragging to
-/Applications), use the binary inside the app bundle, or run
-**Shell Command: Install 'code' command in PATH** from the command palette:
-
-```bash
-"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" --install-extension mlx-console-vscode-0.0.17.vsix --force
+unzip -l mlx-console-vscode-*.vsix       # inspect what actually shipped
 ```
 
 ### Packaging gotchas
 
-- **Keep model weights out of the package.** The default `modelsDir` can sit inside
-  the workspace; `models/**` is in `.vscodeignore` because vsce secret-scans every
-  included file and fails on multi-GB weights.
-- **No relative links in Markdown.** Without a `repository` field, vsce rejects any
-  Markdown link whose target is a repo-relative path rather than a URL — and its
-  scanner does not respect code spans, so even an example inside backticks trips
-  it. Use plain text for such references, or add `repository` to `package.json`.
-- **Reload the window** after installing — VS Code keeps the old extension host
-  running otherwise.
+Each of these cost real time, so they are written down:
 
-### Publishing
+- **Keep model weights out of the package.** The default `modelsDir` can sit inside the
+  workspace. `models/**` is in `.vscodeignore` because vsce secret-scans every included
+  file and dies on multi-GB weights.
+- **No repo-relative Markdown links** unless `package.json` has a `repository` field —
+  and vsce's link scanner does not respect code spans, so even an example inside backticks
+  trips it.
+- **Reload the window** after installing; VS Code keeps the old extension host running.
+- **Pin `@types/vscode` to the `engines.vscode` floor.** A caret range once resolved to a
+  much newer version, so the compiler happily accepted APIs the manifest did not guarantee.
 
-Not published to any marketplace yet. When that changes:
-
-```bash
-npx vsce publish            # Visual Studio Marketplace (needs a publisher PAT)
-npx ovsx publish *.vsix -p <token>   # Open VSX, used by VSCodium/Cursor/Gitpod
-```
-
-Open VSX additionally requires the `mlx-console-vscode` namespace to be created and the
-Eclipse Publisher Agreement signed.
+---
 
 ## Status
 
-Under active development — see the [milestones](https://github.com/bengurion/mlx_console_vscode/milestones).
+Under active development. The memory, model-management and configuration surfaces are
+working; inline completions (FIM), LoRA adapters and KV-cache quantization are not
+implemented — the last of those is blocked upstream, as `mlx_lm.server` exposes no flag
+for it.
 
+Expect rough edges. Issues and ideas are welcome.
 
-## Install
+---
 
-```bash
-# build + package, then install (bump the version in package.json for each rebuild)
-npm run vsce:package
-code --install-extension "$(ls -t mlx-console-vscode-*.vsix | head -1)" --force
+## Author
 
-# verify which build is live
-code --list-extensions --show-versions | grep mlx-console-vscode
-```
+Built by **[@bengurion](https://github.com/bengurion)**.
+
+Standing on: [mlx](https://github.com/ml-explore/mlx) and
+[mlx-lm](https://github.com/ml-explore/mlx-lm) from Apple's machine-learning research
+group, and the [Hugging Face Hub](https://huggingface.co) for model distribution. This
+project is not affiliated with Apple or Hugging Face.
+
+## License
+
+MIT. The full text is in the `LICENSE` file at the repository root.
