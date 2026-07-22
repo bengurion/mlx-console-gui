@@ -182,3 +182,16 @@ test('paging rates need two samples and survive a counter reset', () => {
     'a counter going backwards is unknown, not zero',
   )
 })
+
+test('GPU address space is parsed as-is, even when it exceeds installed memory', () => {
+  // Real numbers from a 128 GB machine: allocation accounting counts mappings
+  // and reserved ranges, so it legitimately exceeds physical RAM. Parsing must
+  // not "correct" it — the display explains it instead.
+  const out = `
+    "PerformanceStatistics" = {"In use system memory (driver)"=0,"Alloc system memory"=195149987840,"In use system memory"=112208871424}
+  `
+  const gpu = parseIoregGpu(out)
+  assert.equal(gpu.allocatedBytes, 195149987840)
+  assert.equal(gpu.inUseBytes, 112208871424)
+  assert.ok(gpu.allocatedBytes! > 137438953472, 'larger than 128 GB of RAM, and that is expected')
+})

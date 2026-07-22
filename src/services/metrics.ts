@@ -111,6 +111,14 @@ export interface GpuStats {
   utilizationPercent?: number
   /** Bytes the GPU driver currently has mapped — tracks the loaded model. */
   inUseBytes?: number
+  /**
+   * `Alloc system memory`: GPU address space, not resident pages.
+   *
+   * Routinely larger than installed RAM, which is not an error — it counts
+   * allocations that are mapped but not backed, the same pages once per client
+   * that maps them, and purgeable ranges the kernel has already reclaimed.
+   * Never treat this as a memory footprint; `inUseBytes` is the physical one.
+   */
   allocatedBytes?: number
   /** Rasterizer/geometry utilization; mostly idle for pure compute workloads. */
   rendererPercent?: number

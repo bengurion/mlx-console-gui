@@ -158,8 +158,21 @@ export function MetricsPage() {
         </div>
       )}
       <div className="small muted">
-        Driver allocated {bytes(gpu?.allocatedBytes)} · max single buffer{' '}
-        {bytes(gpu?.maxBufferBytes)} · unified memory {bytes(gpu?.memoryBytes)}
+        Max single buffer {bytes(gpu?.maxBufferBytes)} · unified memory {bytes(gpu?.memoryBytes)}
+      </div>
+      {/*
+        `Alloc system memory` routinely exceeds installed RAM, which made
+        "driver allocated" read as an impossible figure. It counts address
+        space rather than pages: allocations mapped but not resident, the same
+        pages counted once per client that maps them, and purgeable ranges
+        whose backing has already been reclaimed. Labelled for what it is, and
+        the caveat is shown exactly when the number would otherwise look wrong.
+      */}
+      <div className="small muted">
+        GPU address space {bytes(gpu?.allocatedBytes)}
+        {gpu?.allocatedBytes && gpu.memoryBytes && gpu.allocatedBytes > gpu.memoryBytes
+          ? ' — more than the machine has, because this counts mappings and reserved ranges, not resident pages'
+          : ''}
       </div>
 
       {m?.process && (
