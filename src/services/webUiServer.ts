@@ -1,4 +1,5 @@
 import * as http from 'node:http'
+import * as fs from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import {
   authorize,
@@ -6,8 +7,9 @@ import {
   parseServerAction,
   redactSettings,
   routeOf,
-} from './webUi'
+} from './webUi.ts'
 import type { SettingSpec } from '../shared/protocol'
+import { BROWSER_THEME, STYLES } from '../ui/webview/styles.ts'
 
 /** Refuse absurd bodies rather than buffering whatever arrives. */
 const MAX_BODY_BYTES = 64 * 1024
@@ -19,6 +21,26 @@ const MAX_BODY_BYTES = 64 * 1024
 export interface WebUiLogger {
   info(msg: string, ...rest: unknown[]): void
   error(msg: string, ...rest: unknown[]): void
+}
+
+/**
+ * The full panel UI, offered to the browser.
+ *
+ * When present, the dashboard serves the extension's own React bundle and
+ * bridges its message protocol over HTTP — so model search, downloads,
+ * conversion and metrics are the same code as the panel, not a second
+ * implementation drifting alongside it. Absent (the headless daemon, which has
+ * no extension host behind it) the dashboard falls back to its compact page.
+ */
+export interface WebUiApp {
+  /** Path to the built webview bundle. */
+  scriptPath: string
+  attach(sink: MessageSink): () => void
+  handleMessage(sink: MessageSink, message: unknown): Promise<void>
+}
+
+export interface MessageSink {
+  postMessage(message: unknown): unknown
 }
 
 export interface WebUiDeps {
@@ -33,6 +55,8 @@ export interface WebUiDeps {
   hostLabel?: string
   /** Demand a token as well as the cross-site checks. Off by default. */
   requireToken?(): boolean
+  /** Serve the panel UI itself rather than the compact fallback page. */
+  app?: WebUiApp
 }
 
 /**
@@ -48,8 +72,14 @@ export class WebUiServer {
   private server: http.Server | undefined
   private readonly token = randomBytes(24).toString('base64url')
   private port: number | undefined
+  /** Live browser clients of the panel protocol, keyed by their SSE stream. */
+  private readonly clients = new Map<string, BridgeClient>()
 
-  constructor(private readonly deps: WebUiDeps) {}
+  private readonly deps: WebUiDeps
+
+  constructor(deps: WebUiDeps) {
+    this.deps = deps
+  }
 
   /**
    * The address to open. The token is only in the URL when it is required —
@@ -132,8 +162,34 @@ export class WebUiServer {
     const route = routeOf(url.pathname)
     try {
       if (route.kind === 'page') {
-        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-        return void res.end(page(this.token, this.deps.hostLabel ?? 'VS Code'))
+        const nonce = randomBytes(16).toString('hex')
+        res.writeHead(200, {
+          'content-type': 'text/html; charset=utf-8',
+          // Same posture as the panel's own CSP: nothing external, scripts by
+          // nonce. `connect-src 'self'` is the one addition — the browser
+          // transport needs to reach its own origin.
+          'content-security-policy': [
+            "default-src 'none'",
+            "img-src 'self' https: data:",
+            `style-src 'nonce-${nonce}'`,
+            `script-src 'nonce-${nonce}' 'self'`,
+            "connect-src 'self'",
+          ].join('; '),
+        })
+        const label = this.deps.hostLabel ?? 'VS Code'
+        return void res.end(
+          this.deps.app
+            ? appShell({ nonce, token: this.token, label, view: url.searchParams.get('view') })
+            : page(this.token, label),
+        )
+      }
+      if (route.kind === 'app') return void this.serveBundle(res)
+      if (route.kind === 'events') return void this.openEventStream(res)
+      if (route.kind === 'message') {
+        const client = this.clients.get(url.searchParams.get('c') ?? '')
+        if (!client) return void this.json(res, { ok: false, error: 'unknown client' }, 409)
+        await this.deps.app?.handleMessage(client, await this.readJson(req))
+        return void this.json(res, { ok: true })
       }
       if (route.kind === 'state') {
         return void this.json(res, {
@@ -161,6 +217,55 @@ export class WebUiServer {
       this.deps.log.error('Web UI request failed', err)
       this.json(res, { ok: false, error: String(err) }, 500)
     }
+  }
+
+  /** The panel's bundle, straight off disk. */
+  private serveBundle(res: http.ServerResponse): void {
+    const path = this.deps.app?.scriptPath
+    if (!path || !fs.existsSync(path)) {
+      res.writeHead(404, { 'content-type': 'text/plain' })
+      return void res.end('UI bundle not built')
+    }
+    res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' })
+    fs.createReadStream(path).pipe(res)
+  }
+
+  /**
+   * The host→client half of the protocol.
+   *
+   * Server-sent events rather than a WebSocket: the traffic is one-way, SSE
+   * reconnects on its own, and it is plain HTTP so the same authorisation
+   * applies without a second code path.
+   */
+  private openEventStream(res: http.ServerResponse): void {
+    const id = randomBytes(9).toString('base64url')
+    res.writeHead(200, {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache',
+      connection: 'keep-alive',
+    })
+
+    const client: BridgeClient = {
+      postMessage: (message: unknown) => {
+        res.write(`data: ${JSON.stringify(message)}\n\n`)
+      },
+    }
+    this.clients.set(id, client)
+    const detach = this.deps.app?.attach(client)
+
+    // The client needs its own id to address messages back to this stream.
+    res.write(`event: hello\ndata: ${JSON.stringify({ client: id })}\n\n`)
+    // Some proxies and sleeping laptops drop an idle stream; a comment keeps it
+    // alive and costs nothing.
+    const beat = setInterval(() => res.write(': ping\n\n'), 25_000)
+
+    const close = () => {
+      clearInterval(beat)
+      this.clients.delete(id)
+      detach?.()
+    }
+    res.on('close', close)
+    res.on('error', close)
   }
 
   private json(res: http.ServerResponse, payload: unknown, status = 200): void {
@@ -196,6 +301,135 @@ export class WebUiServer {
   dispose(): void {
     void this.stop()
   }
+}
+
+interface BridgeClient {
+  postMessage(message: unknown): void
+}
+
+const VIEWS = [
+  { id: 'server', label: 'Server & settings' },
+  { id: 'models', label: 'Models' },
+  { id: 'search', label: 'Search Hugging Face' },
+  { id: 'downloads', label: 'Downloads' },
+] as const
+
+/**
+ * The panel, in a browser.
+ *
+ * Serves the extension's own React bundle and stands in for the one thing it
+ * cannot have here: `acquireVsCodeApi`. The shim speaks the same protocol over
+ * HTTP — POST for client→host, server-sent events for host→client — and
+ * re-dispatches arrivals as `window.postMessage`, which is exactly what the
+ * app already listens for. So every view works unmodified.
+ *
+ * Views are separate page loads rather than a client-side router: the app
+ * mounts one view from `window.__MLX_VIEW__`, and a link per tab keeps this
+ * shell honest instead of duplicating routing the panel does not have.
+ */
+function appShell(args: { nonce: string; token: string; label: string; view: string | null }): string {
+  const { nonce, token, label } = args
+  const view = VIEWS.some((v) => v.id === args.view) ? args.view : 'server'
+  const tabs = VIEWS.map(
+    (v) =>
+      `<a class="tab${v.id === view ? ' active' : ''}" href="?view=${v.id}${token ? '&t=' + token : ''}">${v.label}</a>`,
+  ).join('')
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>MLX Console</title>
+<style nonce="${nonce}">
+${BROWSER_THEME}
+${STYLES}
+  body { background: var(--page-background); padding: 0; }
+  header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+           padding: 12px 16px 0; }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  nav { display: flex; gap: 2px; padding: 8px 16px 0; overflow-x: auto;
+        border-bottom: 1px solid var(--vscode-panel-border); }
+  .tab { padding: 6px 12px; border-radius: 6px 6px 0 0; white-space: nowrap;
+         color: var(--vscode-descriptionForeground); border: 1px solid transparent;
+         border-bottom: none; }
+  .tab:hover { color: var(--vscode-foreground); text-decoration: none; }
+  .tab.active { color: var(--vscode-foreground); background: var(--page-elevated);
+                border-color: var(--vscode-panel-border); }
+  main { max-width: 1100px; margin-inline: auto; padding: 12px 8px 48px; }
+  #offline { display: none; padding: 6px 16px; background: var(--vscode-editorWarning-foreground);
+             color: #000; font-size: 12px; }
+  #offline.on { display: block; }
+</style>
+</head>
+<body>
+<header>
+  <h1>MLX Console</h1>
+  <span class="muted small">served by ${label} · 127.0.0.1 · local only</span>
+</header>
+<nav>${tabs}</nav>
+<div id="offline">Disconnected — ${label} may have closed. Reconnecting…</div>
+<main><div id="root"></div></main>
+
+<script nonce="${nonce}">
+window.__MLX_VIEW__ = ${JSON.stringify(view)};
+(function () {
+  var TOKEN = ${JSON.stringify(token)};
+  var qs = function (extra) { return TOKEN ? '?t=' + encodeURIComponent(TOKEN) + (extra || '') : (extra ? '?' + extra.slice(1) : ''); };
+  var clientId = null;
+  var queue = [];   // messages posted before the stream said hello
+
+  function send(msg) {
+    if (!clientId) return void queue.push(msg);
+    fetch('/api/message' + qs('&c=' + encodeURIComponent(clientId)), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-mlx-token': TOKEN },
+      body: JSON.stringify(msg),
+    }).catch(function () { /* the stream's own reconnect will resync */ });
+  }
+
+  function connect() {
+    var es = new EventSource('/api/events' + qs());
+    es.addEventListener('hello', function (e) {
+      clientId = JSON.parse(e.data).client;
+      document.getElementById('offline').classList.remove('on');
+      var pending = queue; queue = [];
+      pending.forEach(send);
+    });
+    es.onmessage = function (e) {
+      // The app listens for window messages; this is the same envelope the
+      // extension host would have posted.
+      window.postMessage(JSON.parse(e.data), '*');
+    };
+    es.onerror = function () {
+      clientId = null;
+      document.getElementById('offline').classList.add('on');
+      // EventSource retries by itself, but a closed stream needs a new one.
+      if (es.readyState === 2) { es.close(); setTimeout(connect, 2000); }
+    };
+  }
+  connect();
+
+  // The single API the panel code expects from its host.
+  window.acquireVsCodeApi = function () {
+    var state = {};
+    return {
+      postMessage: function (msg) {
+        if (msg && msg.type === 'openExternal') return void window.open(msg.url, '_blank', 'noopener');
+        if (msg && msg.type === 'copy') return void navigator.clipboard.writeText(msg.text);
+        if (msg && msg.type === 'openSettings') return;  // no settings editor here
+        send(msg);
+      },
+      getState: function () { return state; },
+      setState: function (s) { state = s; return s; },
+    };
+  };
+})();
+</script>
+<script nonce="${nonce}" src="/app.js${token ? '?t=' + token : ''}"></script>
+</body>
+</html>`
 }
 
 /**

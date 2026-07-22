@@ -56,9 +56,21 @@ export interface HubDeps {
   extensionUri: vscode.Uri
 }
 
+/**
+ * Anything that can receive a host→client message.
+ *
+ * The hub only ever calls `postMessage` on a webview, so typing it this way
+ * lets a browser client on the local dashboard attach to the exact same
+ * message bus — same RPCs, same pushes, no second implementation to keep in
+ * step. `vscode.Webview` satisfies this structurally.
+ */
+export interface MessageSink {
+  postMessage(message: unknown): unknown
+}
+
 /** Central message router shared by all MLX Console webview views. */
 export class WebviewHub {
-  private readonly webviews = new Set<vscode.Webview>()
+  private readonly webviews = new Set<MessageSink>()
   private readonly disposables: vscode.Disposable[] = []
   private readonly modelConfig = new ModelConfigReader()
   /** Guards against re-profiling on every status tick for the same model. */
@@ -297,6 +309,26 @@ export class WebviewHub {
     }
   }
 
+  /**
+   * Attach a non-webview client (the local dashboard in a browser).
+   *
+   * Returns a detach function. Metrics sampling is subscribed for as long as
+   * the client is connected, the same bargain the panel makes when visible.
+   */
+  attach(sink: MessageSink): () => void {
+    this.webviews.add(sink)
+    const metricsSub = this.deps.metrics.subscribe()
+    return () => {
+      this.webviews.delete(sink)
+      metricsSub.dispose()
+    }
+  }
+
+  /** Handle one client→host message. Public so non-webview clients can route. */
+  handleMessage(sink: MessageSink, raw: unknown): Promise<void> {
+    return this.onMessage(sink, raw)
+  }
+
   register(view: vscode.WebviewView) {
     const webview = view.webview
     this.webviews.add(webview)
@@ -327,7 +359,7 @@ export class WebviewHub {
     for (const w of this.webviews) void w.postMessage(msg)
   }
 
-  private async onMessage(webview: vscode.Webview, raw: unknown) {
+  private async onMessage(webview: MessageSink, raw: unknown) {
     const m = raw as HostBound
     switch (m.type) {
       case 'ready':
@@ -461,7 +493,7 @@ export class WebviewHub {
     }
   }
 
-  private async sendInitial(webview: vscode.Webview) {
+  private async sendInitial(webview: MessageSink) {
     void webview.postMessage({ type: 'push', name: 'serverStatus', data: this.serverStatusLite() })
     void webview.postMessage({ type: 'push', name: 'envStatus', data: this.envStatusLite() })
     void webview.postMessage({ type: 'push', name: 'downloads', data: this.deps.downloads.list() })

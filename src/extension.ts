@@ -82,6 +82,14 @@ export async function activate(context: vscode.ExtensionContext) {
     notify: (message) => void vscode.window.showErrorMessage(message),
     hostLabel: 'VS Code',
     requireToken: () => Config.webUiRequireToken(),
+    // Serve the panel's own UI, bridged to the same hub the panels use, so the
+    // browser gets model search, downloads and conversion rather than a
+    // cut-down copy of them.
+    app: {
+      scriptPath: path.join(context.extensionPath, 'dist', 'webview', 'main.js'),
+      attach: (sink) => hub.attach(sink),
+      handleMessage: (sink, message) => hub.handleMessage(sink, message),
+    },
   })
   context.subscriptions.push(webUi)
 

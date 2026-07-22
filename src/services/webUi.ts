@@ -113,6 +113,12 @@ export type Route =
   | { kind: 'state' }
   | { kind: 'setting' }
   | { kind: 'server' }
+  /** The panel's own JS bundle, so the browser runs the same UI. */
+  | { kind: 'app' }
+  /** Server-sent events: the host→client half of the panel protocol. */
+  | { kind: 'events' }
+  /** One client→host message, the browser's stand-in for postMessage. */
+  | { kind: 'message' }
   | { kind: 'unknown' }
 
 export function routeOf(pathname: string): Route {
@@ -125,6 +131,12 @@ export function routeOf(pathname: string): Route {
       return { kind: 'setting' }
     case '/api/server':
       return { kind: 'server' }
+    case '/app.js':
+      return { kind: 'app' }
+    case '/api/events':
+      return { kind: 'events' }
+    case '/api/message':
+      return { kind: 'message' }
     default:
       return { kind: 'unknown' }
   }

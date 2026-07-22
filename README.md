@@ -19,9 +19,9 @@ The same core ships two ways. Pick either, or run both — they cooperate rather
 
 | | **VS Code extension** (`.vsix`) | **Headless CLI** (`mlx-console`) |
 | --- | --- | --- |
-| **You get** | Activity-bar panels, model search and conversion, chat provider | The same dashboard in a browser, plus terminal commands |
+| **You get** | Activity-bar panels, model search and conversion, chat provider | Metrics, settings and server control, in a browser or a terminal |
 | **Needs** | VS Code 1.125+ running | Nothing but Node and a venv with mlx-lm |
-| **Interface** | Native panels + web dashboard (on by default) | Web dashboard + `status` / `start` / `stop` |
+| **Interface** | Native panels, or the same UI in a browser (on by default) | Compact dashboard + `status` / `start` / `stop` |
 | **Dashboard auth** | Cross-site refused; token optional | Same |
 | **Runs at login** | No — dies with the editor | Yes, via launchd |
 | **Settings** | VS Code settings (`mlxConsole.*`) | `~/.mlx-console/config.json` |
@@ -39,7 +39,7 @@ flowchart TB
         CLI["mlx-console CLI<br/><i>terminal · launchd</i>"]
     end
 
-    DASH["Web dashboard<br/><i>127.0.0.1 · same-site only</i>"]
+    DASH["Web dashboard<br/><i>127.0.0.1 · same UI, same hub</i>"]
     REG[("server-state.json<br/><i>shared registry</i>")]
     SRV["mlx_lm.server<br/><i>detached process</i>"]
     GPU["Unified memory<br/><i>weights + KV cache</i>"]
@@ -215,9 +215,23 @@ in `~/.mlx-console/config.json` at a virtualenv that has mlx-lm in it.
 
 ## The web dashboard
 
-Both packages can serve the same editable dashboard on loopback: settings, live metrics, and
-Start / Stop / Restart / Clear & reload. It goes through the same code paths as the VS Code
-panel, so the two cannot drift apart, and it updates a field you are not currently typing in.
+With VS Code running, the dashboard **is** the panel — the same React app, served to your
+browser and bridged to the same message hub. Hugging Face search, downloads with progress,
+conversion, the model list, metrics and every setting: not a reimplementation that slowly
+falls behind, but the same code with a different transport.
+
+```mermaid
+flowchart LR
+    P["Panel<br/><i>VS Code webview</i>"] -->|postMessage| H["WebviewHub<br/><i>one message router</i>"]
+    B["Browser<br/><i>same React bundle</i>"] -->|"POST /api/message"| BR["HTTP bridge"]
+    BR --> H
+    H -->|"server-sent events"| BR
+    BR --> B
+    H --> S["Services<br/><i>models · downloads · metrics</i>"]
+```
+
+Tabs across the top switch view; each is a page load that mounts the same component the
+corresponding panel does.
 
 **From the extension** — it is **on by default**, at a plain, bookmarkable address:
 
@@ -232,8 +246,10 @@ Each VS Code window serves its own dashboard: the first takes port 8090, the res
 take an OS-assigned port — which is when the command is genuinely easier than guessing. Set
 `webUi.enabled` to false to turn it off.
 
-**From the CLI** — `mlx-console serve` does the same with no editor involved, and
-`mlx-console url` prints the address.
+**From the CLI** — `mlx-console serve` needs no editor, and `mlx-console url` prints the
+address. It serves a compact page rather than the full UI: model search, downloads and
+conversion live in the extension host, so with VS Code closed there is nothing behind them.
+What the daemon does give you is live metrics, every setting, and server control.
 
 <details>
 <summary><b>How a page with no password stays safe</b></summary>
