@@ -142,9 +142,16 @@ export class HarmonyProxy {
         res.end(text)
       }
     } catch (err) {
-      log.warn(`Harmony proxy request failed: ${String(err)}`)
+      /*
+       * Node's fetch reports every transport failure as `TypeError: fetch
+       * failed` and hides the real one in `cause` — so a server that simply
+       * is not running reads as a bug in the proxy. Unwrap it and say what
+       * happened, since the usual answer is "start the model server".
+       */
+      const message = describeUpstreamFailure(err, upstream)
+      log.warn(`Harmony proxy: ${message}`)
       if (!res.headersSent) res.writeHead(502, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ error: { message: `Upstream request failed: ${String(err)}` } }))
+      res.end(JSON.stringify({ error: { message, type: 'upstream_unavailable' } }))
     }
   }
 
@@ -178,4 +185,30 @@ async function pipe(body: ReadableStream<Uint8Array>, res: http.ServerResponse) 
     res.write(value)
   }
   res.end()
+}
+
+/**
+ * A useful sentence from a fetch failure.
+ *
+ * `TypeError: fetch failed` is what Node reports for every transport error;
+ * the errno that says which one lives on `cause`. ECONNREFUSED in particular
+ * has a specific, common and fixable meaning here — the model server is not
+ * running — and saying "fetch failed" instead sends people looking at the
+ * proxy, which is working perfectly.
+ */
+export function describeUpstreamFailure(err: unknown, upstream: string): string {
+  const cause = (err as { cause?: { code?: string; message?: string } })?.cause
+  const code = cause?.code
+
+  if (code === 'ECONNREFUSED') {
+    return `Nothing is listening at ${upstream} — the model server is not running. Start it from the Dashboard, or with \`mlx-console start\`.`
+  }
+  if (code === 'ECONNRESET') {
+    return `${upstream} closed the connection mid-request. A model load can take minutes; the server does not answer while it reads weights.`
+  }
+  if (code === 'ETIMEDOUT') {
+    return `${upstream} did not answer in time.`
+  }
+  const detail = code ?? cause?.message ?? (err instanceof Error ? err.message : String(err))
+  return `Could not reach ${upstream}: ${detail}`
 }

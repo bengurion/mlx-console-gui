@@ -124,3 +124,29 @@ test('non-data lines and unparseable frames are passed along', () => {
   assert.match(out, /: keep-alive comment/)
   assert.match(out, /data: \{not json\}/)
 })
+
+// ---- upstream failures -----------------------------------------------------
+
+test('a refused connection says the server is not running', async () => {
+  const { describeUpstreamFailure } = await import('../src/services/harmonyProxy.ts')
+
+  // Node reports every transport failure as `TypeError: fetch failed` and puts
+  // the errno on `cause`, so the surface message names the proxy for a fault
+  // that is nothing to do with it.
+  const refused = Object.assign(new TypeError('fetch failed'), {
+    cause: { code: 'ECONNREFUSED', message: 'connect ECONNREFUSED 127.0.0.1:8080' },
+  })
+  const message = describeUpstreamFailure(refused, 'http://127.0.0.1:8080')
+  assert.match(message, /not running/)
+  assert.match(message, /mlx-console start/)
+  assert.equal(message.includes('fetch failed'), false, 'the useless wording is gone')
+
+  const reset = Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET' } })
+  assert.match(describeUpstreamFailure(reset, 'http://x'), /closed the connection/)
+
+  // An unrecognised failure still names the upstream and says something.
+  const odd = Object.assign(new TypeError('fetch failed'), { cause: { code: 'EHOSTDOWN' } })
+  assert.match(describeUpstreamFailure(odd, 'http://x'), /Could not reach http:\/\/x: EHOSTDOWN/)
+
+  assert.match(describeUpstreamFailure(new Error('plain'), 'http://x'), /plain/)
+})
