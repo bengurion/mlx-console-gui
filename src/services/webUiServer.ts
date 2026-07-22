@@ -133,12 +133,31 @@ export class WebUiServer {
     })
   }
 
+  /**
+   * Stop listening, and actually finish.
+   *
+   * `close()` stops accepting connections but only calls back once every open
+   * one has ended — and the dashboard holds an event stream open for as long
+   * as the tab exists. Waiting for that means a daemon that never exits on
+   * Ctrl-C while a browser tab is open, which looks exactly like a hang. So
+   * live connections are ended deliberately rather than waited on.
+   */
   async stop(): Promise<void> {
     const s = this.server
     if (!s) return
     this.server = undefined
     this.port = undefined
-    await new Promise<void>((resolve) => s.close(() => resolve()))
+
+    for (const [id, client] of this.clients) {
+      client.close?.()
+      this.clients.delete(id)
+    }
+    await new Promise<void>((resolve) => {
+      s.close(() => resolve())
+      // Node 18.2+; the loop above already ended the streams we know about,
+      // this catches anything mid-request.
+      s.closeAllConnections?.()
+    })
     this.deps.log.info('Web UI stopped')
   }
 
@@ -249,6 +268,7 @@ export class WebUiServer {
       postMessage: (message: unknown) => {
         res.write(`data: ${JSON.stringify(message)}\n\n`)
       },
+      close: () => res.end(),
     }
     this.clients.set(id, client)
     const detach = this.deps.app?.attach(client)
@@ -305,6 +325,8 @@ export class WebUiServer {
 
 interface BridgeClient {
   postMessage(message: unknown): void
+  /** End the event stream, so shutdown is not blocked waiting for it. */
+  close?(): void
 }
 
 const VIEWS = [

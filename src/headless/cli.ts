@@ -356,6 +356,8 @@ async function serve(port?: number): Promise<void> {
   const shutdown = () => {
     clearUrlFile()
     void ui.stop().then(() => process.exit(0))
+    // Backstop: whatever is holding the loop open, Ctrl-C must mean Ctrl-C.
+    setTimeout(() => process.exit(0), 2000).unref()
   }
   process.on('SIGINT', shutdown)
   process.on('SIGTERM', shutdown)
