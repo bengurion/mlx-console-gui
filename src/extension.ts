@@ -78,6 +78,9 @@ export async function activate(context: vscode.ExtensionContext) {
       if (action === 'restart') return { ok: await server.restart() }
       return await hub.unloadModel()
     },
+    log,
+    notify: (message) => void vscode.window.showErrorMessage(message),
+    hostLabel: 'VS Code',
   })
   context.subscriptions.push(webUi)
 

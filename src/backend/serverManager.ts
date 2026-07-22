@@ -5,6 +5,7 @@ import { Config } from '../config'
 import { mlxProcessEnv } from '../util/env'
 import type { EnvironmentManager } from './environmentManager'
 import { MlxClient } from './mlxClient'
+import { buildServerArgs } from './serverArgs'
 import {
   isUsableState,
   parseState,
@@ -284,34 +285,20 @@ export class ServerManager {
 
     this.setState('starting')
     const bin = this.env.binPath('mlx_lm.server')
-    const args = [
-      '--host',
-      Config.bindHost(),
-      '--port',
-      String(Config.serverPort()),
-      '--log-level',
-      'INFO',
-    ]
-    // KV-cache budget: the practical ceiling on how much context stays cached.
-    const cacheSize = Config.promptCacheSize()
-    if (cacheSize > 0) args.push('--prompt-cache-size', String(cacheSize))
-    const cacheBytes = Config.promptCacheBytes()
-    if (cacheBytes > 0) args.push('--prompt-cache-bytes', String(cacheBytes))
-    // Concurrency and speculative decoding: each flag is omitted entirely when
-    // left at 0/'' so mlx_lm.server keeps its own defaults.
-    const decode = Config.decodeConcurrency()
-    if (decode > 0) args.push('--decode-concurrency', String(decode))
-    const prompts = Config.promptConcurrency()
-    if (prompts > 0) args.push('--prompt-concurrency', String(prompts))
-    const prefill = Config.prefillStepSize()
-    if (prefill > 0) args.push('--prefill-step-size', String(prefill))
-    const draft = Config.draftModel()
-    if (draft) {
-      args.push('--draft-model', draft)
-      const draftTokens = Config.numDraftTokens()
-      if (draftTokens > 0) args.push('--num-draft-tokens', String(draftTokens))
-    }
-    args.push(...Config.serverExtraArgs())
+    // Shared with the headless CLI so the two cannot start the same server
+    // with different flags.
+    const args = buildServerArgs({
+      bindHost: Config.bindHost(),
+      port: Config.serverPort(),
+      promptCacheSize: Config.promptCacheSize(),
+      promptCacheBytes: Config.promptCacheBytes(),
+      decodeConcurrency: Config.decodeConcurrency(),
+      promptConcurrency: Config.promptConcurrency(),
+      prefillStepSize: Config.prefillStepSize(),
+      draftModel: Config.draftModel(),
+      numDraftTokens: Config.numDraftTokens(),
+      extraArgs: Config.serverExtraArgs(),
+    })
     log.info(`Starting mlx_lm.server: ${bin} ${args.join(' ')}`)
 
     try {

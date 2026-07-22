@@ -1,0 +1,185 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import * as fs from 'node:fs'
+import * as os from 'node:os'
+import * as path from 'node:path'
+import { buildServerArgs } from '../src/backend/serverArgs.ts'
+import {
+  SettingsStore,
+  extractMlxSettings,
+  parseJsonc,
+  stripJsonComments,
+} from '../src/headless/settingsStore.ts'
+import { resolveVenv, venvCandidates, settingsCandidates } from '../src/headless/hostPaths.ts'
+import { buildPlist, loadCommands, xmlEscape, LABEL } from '../src/headless/launchd.ts'
+import { parseArgs } from '../src/headless/args.ts'
+
+// ---- server arguments ------------------------------------------------------
+
+test('flags left at 0 are omitted so the server keeps its own defaults', () => {
+  const args = buildServerArgs({
+    bindHost: '127.0.0.1',
+    port: 8080,
+    promptCacheSize: 0,
+    decodeConcurrency: 0,
+    numDraftTokens: 3,
+  })
+  assert.deepEqual(args, ['--host', '127.0.0.1', '--port', '8080', '--log-level', 'INFO'])
+})
+
+test('num-draft-tokens is only passed alongside a draft model', () => {
+  const withoutDraft = buildServerArgs({ bindHost: 'h', port: 1, numDraftTokens: 5 })
+  assert.equal(withoutDraft.includes('--num-draft-tokens'), false)
+
+  const withDraft = buildServerArgs({ bindHost: 'h', port: 1, draftModel: 'small', numDraftTokens: 5 })
+  assert.deepEqual(withDraft.slice(-4), ['--draft-model', 'small', '--num-draft-tokens', '5'])
+})
+
+test('blank extra args do not become empty arguments', () => {
+  const args = buildServerArgs({ bindHost: 'h', port: 1, extraArgs: ['--chat-template', 'x', '  ', ''] })
+  assert.deepEqual(args.slice(-2), ['--chat-template', 'x'])
+})
+
+// ---- JSONC -----------------------------------------------------------------
+
+test('comments are stripped without damaging strings that contain slashes', () => {
+  const src = `{
+    // a line comment
+    "modelsDir": "/Users/me/models", /* trailing block */
+    "url": "https://example.com//path",
+    "note": "not // a comment",
+    /* multi
+       line */
+    "port": 8080,
+  }`
+  const parsed = parseJsonc(src)
+  assert.deepEqual(parsed, {
+    modelsDir: '/Users/me/models',
+    url: 'https://example.com//path',
+    note: 'not // a comment',
+    port: 8080,
+  })
+})
+
+test('an escaped quote does not end the string early', () => {
+  assert.equal(stripJsonComments('{"a":"say \\"hi\\" // no"}'), '{"a":"say \\"hi\\" // no"}')
+})
+
+test('unparseable settings yield undefined rather than throwing', () => {
+  assert.equal(parseJsonc('{ this is not json'), undefined)
+  assert.equal(parseJsonc('[1,2]'), undefined, 'an array is not a settings object')
+})
+
+// ---- seeding from VSCode ---------------------------------------------------
+
+test('both the flat and nested forms of VSCode settings are read', () => {
+  const flat = extractMlxSettings({
+    'mlxConsole.server.port': 8081,
+    'editor.fontSize': 14,
+    'mlxConsoleOther.x': 1,
+  })
+  assert.deepEqual(flat, { 'server.port': 8081 })
+
+  const nested = extractMlxSettings({ mlxConsole: { 'server.port': 8082, modelsDir: '/m' } })
+  assert.deepEqual(nested, { 'server.port': 8082, modelsDir: '/m' })
+})
+
+test('the store layers manifest defaults under the file, and records the source', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mlx-cfg-'))
+  const file = path.join(dir, 'config.json')
+  const store = new SettingsStore({ 'server.port': 8080, modelsDir: '' }, file).load({
+    'server.port': 8081,
+  })
+
+  assert.equal(store.get('server.port'), 8081, 'seeded value wins over the default')
+  assert.equal(store.get('modelsDir'), '', 'unset falls through to the manifest default')
+  assert.equal(store.sourceOf('server.port'), 'vscode')
+  assert.equal(store.sourceOf('modelsDir'), 'default')
+
+  store.set('modelsDir', '/models')
+  assert.equal(store.sourceOf('modelsDir'), 'cli')
+
+  // A second run must read the file, not re-seed from VSCode.
+  const reopened = new SettingsStore({ 'server.port': 8080 }, file).load({ 'server.port': 9999 })
+  assert.equal(reopened.get('server.port'), 8081)
+  assert.equal(reopened.get('modelsDir'), '/models')
+
+  fs.rmSync(dir, { recursive: true, force: true })
+})
+
+test('the config file is not world-readable, because it can hold a token', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mlx-cfg-'))
+  const file = path.join(dir, 'config.json')
+  new SettingsStore({}, file).load({ 'huggingFace.token': 'hf_secret' })
+  assert.equal(fs.statSync(file).mode & 0o077, 0, 'no group or other permissions')
+  fs.rmSync(dir, { recursive: true, force: true })
+})
+
+// ---- locating the editor's files -------------------------------------------
+
+test('an explicit venv wins; otherwise the first one holding the binary', () => {
+  const present = '/b/venv/bin/mlx_lm.server'
+  assert.equal(
+    resolveVenv({ configured: ' /mine ', candidates: ['/a/venv'], exists: () => true }),
+    '/mine',
+  )
+  assert.equal(
+    resolveVenv({ candidates: ['/a/venv', '/b/venv'], exists: (p) => p === present }),
+    '/b/venv',
+  )
+  assert.equal(resolveVenv({ candidates: ['/a/venv'], exists: () => false }), undefined)
+})
+
+test('forks with their own user directories are searched too', () => {
+  const dirs = venvCandidates('/home/me').join('\n')
+  for (const editor of ['Code', 'Cursor', 'VSCodium']) {
+    assert.ok(dirs.includes(`/${editor}/User/globalStorage/mlx-console.mlx-console-vscode/venv`), editor)
+  }
+  assert.ok(settingsCandidates('/home/me')[0].endsWith('/Code/User/settings.json'))
+})
+
+// ---- launchd ---------------------------------------------------------------
+
+test('the plist is valid XML with absolute paths', () => {
+  const xml = buildPlist({ node: '/usr/local/bin/node', script: '/opt/mlx/cli.js', port: 8090, home: '/home/me' })
+  assert.ok(xml.startsWith('<?xml'))
+  assert.ok(xml.includes(`<string>${LABEL}</string>`))
+  assert.ok(xml.includes('<string>/usr/local/bin/node</string>'))
+  assert.ok(xml.includes('<string>serve</string>'))
+  assert.ok(xml.includes('<string>--port</string>'))
+  assert.ok(xml.includes('<string>/home/me/.mlx-console/daemon.log</string>'))
+})
+
+test('a deliberate stop is not undone by launchd relaunching it', () => {
+  const xml = buildPlist({ node: '/n', script: '/s' })
+  assert.match(xml, /<key>SuccessfulExit<\/key>\s*<false\/>/)
+})
+
+test('paths with XML-significant characters are escaped', () => {
+  assert.equal(xmlEscape('a & b <c> "d"'), 'a &amp; b &lt;c&gt; &quot;d&quot;')
+  const xml = buildPlist({ node: '/n', script: '/Users/a&b/cli.js' })
+  assert.ok(xml.includes('/Users/a&amp;b/cli.js'))
+  assert.equal(xml.includes('/Users/a&b/'), false)
+})
+
+test('loading boots out any previous agent first, so install is repeatable', () => {
+  const cmds = loadCommands('/p/x.plist', 501)
+  assert.deepEqual(cmds[0], ['launchctl', 'bootout', `gui/501/${LABEL}`])
+  assert.deepEqual(cmds[1], ['launchctl', 'bootstrap', 'gui/501', '/p/x.plist'])
+})
+
+// ---- argument parsing ------------------------------------------------------
+
+test('commands and flags parse in either order', () => {
+  assert.equal(parseArgs(['serve']).command, 'serve')
+  assert.equal(parseArgs(['serve', '--port', '9000']).port, 9000)
+  assert.equal(parseArgs(['--port=9001', 'serve']).port, 9001)
+  assert.equal(parseArgs(['status', '--json']).json, true)
+  assert.equal(parseArgs(['--help']).help, true)
+  assert.equal(parseArgs([]).command, 'help', 'no arguments prints help rather than acting')
+})
+
+test('a bad port is ignored rather than becoming NaN', () => {
+  assert.equal(parseArgs(['serve', '--port', 'abc']).port, undefined)
+  assert.equal(parseArgs(['serve', '--port', '-1']).port, undefined)
+})

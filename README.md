@@ -1,4 +1,4 @@
-# MLX Console for VS Code
+# MLX Console GUI  
 
 **Run large language models locally on your Mac, without leaving the editor.**
 
@@ -10,6 +10,8 @@ with them.
 If you have used mlx-lm from the terminal, you know the loop: one window running the
 server, another for `huggingface-cli`, a browser tab open on the Hub trying to work out
 whether a 120B model will actually fit in 128 GB. This collapses that into one panel.
+
+Availaible as an extension for VsCode !!!
 
 ---
 
@@ -146,28 +148,108 @@ Everything is editable there — the same settings, the same Start / Stop / Rest
 Clear & reload buttons, going through the same code paths as the panel, so the two cannot
 drift apart. `webUi.port` changes the port; `0` lets the OS pick a free one.
 
-#### VS Code has to be running
+#### If VS Code is running, it serves the dashboard
 
-The dashboard is served *by* the extension, inside VS Code's extension host. There is no
-headless or CLI mode: quit VS Code and port 8090 goes with it. A window minimised in the
-background is enough — the extension activates on startup, and you do not need the panel
-open or a folder loaded — but something has to be running.
+Enabled from the extension, the dashboard lives inside VS Code's extension host: a window
+minimised in the background is enough (it activates on startup, no panel or folder needed),
+but quit VS Code and port 8090 goes with it.
 
-**The model server is not affected by this.** `mlx_lm.server` is spawned detached, in its
-own process group, so it keeps serving `http://127.0.0.1:8080/v1` after you close the
-window that started it, and the next window you open reattaches to it rather than starting
-a second copy. Closing VS Code costs you the dashboard, not your loaded model — which also
-means nothing frees that memory until you stop the server, from any window or with `kill`.
+**Your loaded model does not go with it.** `mlx_lm.server` is spawned detached, in its own
+process group, so it keeps serving `http://127.0.0.1:8080/v1` after the window that started
+it closes, and the next window reattaches rather than starting a second copy. Which also
+means nothing frees that memory until you stop the server.
 
-If you want inference with no editor in the loop at all, you do not need this extension for
-that — run the server yourself and point any OpenAI-compatible client at it:
+If you would rather not depend on the editor at all, there is a headless mode.
+
+---
+
+## Headless mode
+
+The extension host is a convenient place to run this, not a necessary one. Everything the
+dashboard needs is a process, a settings file and some `ioreg` / `vm_stat` output — so the
+same dashboard and the same server control also ship as a CLI:
 
 ```sh
-mlx_lm.server --model <path-or-hf-id> --port 8080
+mlx-console serve            # the dashboard, no VS Code
+mlx-console start | stop | restart
+mlx-console status [--json]
+mlx-console url              # the tokenised dashboard link
+mlx-console config           # where settings and the venv were found
+mlx-console install [--port N]   # run the dashboard at login
+mlx-console uninstall
 ```
 
-What you lose is everything the extension adds around it: the pre-flight memory check, the
-live headroom and KV-cost figures, and the model management.
+`serve` prints the tokenised URL on startup, exactly as the palette command does:
+
+```
+  MLX Console — http://127.0.0.1:8090/?t=_TtHEyvjam_A9gVnX-…
+```
+
+`status` is the terminal version of the metrics panel:
+
+```
+server:  ready (pid 4821) on port 8080
+model:   mlx-community/gpt-oss-120b-4bit
+memory:  62.1 GB held by the server
+venv:    …/globalStorage/mlx-console.mlx-console-vscode/venv
+```
+
+**The two share one server, not two.** The CLI reads the same registry file the extension
+writes, so `mlx-console status` reports the model VS Code loaded, `mlx-console stop` stops
+it, and starting from either side is adopted by the other rather than racing for the port.
+They cannot start it with different flags either — both build the command line from the
+same code.
+
+**Settings are a deliberate exception.** With VS Code closed, nothing owns `settings.json`,
+and writing to it anyway is a bad trade: it is JSONC, and VS Code rewrites the whole file on
+save, so concurrent edits lose. The CLI therefore owns `~/.mlx-console/config.json`, seeded
+once from your VS Code settings and `0600` because it can hold a Hugging Face token. After
+that the two files are independent, so they can drift — each value in the headless dashboard
+is tagged `[vscode]`, `[cli]` or `[default]` so you can see which is which.
+
+#### Running it at login
+
+`mlx-console install` writes a LaunchAgent to
+`~/Library/LaunchAgents/com.mlx-console.daemon.plist` and loads it, so the dashboard comes
+back after a reboot. It restarts on crash but **not** after a clean exit, so stopping it
+deliberately stays stopped. Logs go to `~/.mlx-console/daemon.log`. `mlx-console uninstall`
+removes it.
+
+Under launchd there is no terminal to print the URL to, and launchd's log files are created
+world-readable — so the daemon deliberately does **not** write the token to its log. It goes
+to `~/.mlx-console/url` at `0600`, and `mlx-console url` reads it back:
+
+```sh
+$ mlx-console url
+http://127.0.0.1:8090/?t=YUj6U3wU5hgEhzVToVOHn_d_zS7Z6Tpq
+```
+
+Note what this does *not* do: it serves the dashboard, it does not load a model at boot.
+Weights are only read when the first request naming them arrives.
+
+#### Getting the command on your PATH
+
+The CLI is bundled into the extension as `dist/cli.js`, so it is already on your machine.
+From a clone of this repo, `npm link` gives you `mlx-console` directly. Otherwise alias it:
+
+```sh
+alias mlx-console='node ~/.vscode/extensions/mlx-console.mlx-console-vscode-*/dist/cli.js'
+```
+
+It finds the environment the extension already built — including Cursor's and VSCodium's,
+which keep their own user directories — so there is nothing further to install. If you have
+never run the extension, set `venvPath` in `~/.mlx-console/config.json` to a virtualenv that
+has mlx-lm in it.
+
+**Same rules as before:** loopback only, token on every request, off unless you start it.
+Running it at login means a port listening whenever you are logged in, which is the one
+genuinely new exposure here — it is still bound to `127.0.0.1` and still refuses anything
+without the token.
+
+If you want inference with no editor and no dashboard at all, you do not need any of this —
+`mlx_lm.server --model <path-or-hf-id> --port 8080` is the whole requirement. What you give
+up is the pre-flight memory check, the live headroom and KV-cost figures, and the model
+management.
 
 **This is for your machine only.** The listener binds to `127.0.0.1` in code and
 deliberately ignores `server.exposeToLan` — there is no setting that widens it, and it is

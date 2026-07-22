@@ -1,7 +1,5 @@
-import * as vscode from 'vscode'
 import * as http from 'node:http'
 import { randomBytes } from 'node:crypto'
-import { log } from '../util/logger'
 import {
   authorize,
   isRedactedPlaceholder,
@@ -14,11 +12,25 @@ import type { SettingSpec } from '../shared/protocol'
 /** Refuse absurd bodies rather than buffering whatever arrives. */
 const MAX_BODY_BYTES = 64 * 1024
 
+/**
+ * Just enough logging to run in either host: the extension routes this to its
+ * output channel, the CLI to stdout.
+ */
+export interface WebUiLogger {
+  info(msg: string, ...rest: unknown[]): void
+  error(msg: string, ...rest: unknown[]): void
+}
+
 export interface WebUiDeps {
   settings(): SettingSpec[]
   updateSetting(key: string, value: unknown): Promise<{ ok: boolean; error?: string }>
   state(): Promise<unknown>
   serverAction(action: 'start' | 'stop' | 'restart' | 'clear'): Promise<{ ok: boolean }>
+  log: WebUiLogger
+  /** Surface a failure to the user; a modal in VSCode, stderr in the CLI. */
+  notify?(message: string): void
+  /** Shown in the page header so you can tell the two dashboards apart. */
+  hostLabel?: string
 }
 
 /**
@@ -29,7 +41,7 @@ export interface WebUiDeps {
  * and stop processes. Every request carries a token generated per session; see
  * `webUi.ts` for why localhost alone is not a boundary.
  */
-export class WebUiServer implements vscode.Disposable {
+export class WebUiServer {
   private server: http.Server | undefined
   private readonly token = randomBytes(24).toString('base64url')
   private port: number | undefined
@@ -46,13 +58,13 @@ export class WebUiServer implements vscode.Disposable {
 
     return new Promise((resolve) => {
       server.on('error', (err) => {
-        log.error(`Web UI could not listen on ${port}`, err)
+        this.deps.log.error(`Web UI could not listen on ${port}`, err)
         // Each window has its own token, so a second window cannot share the
         // first one's dashboard — say so rather than reporting a raw errno.
         const busy = (err as NodeJS.ErrnoException).code === 'EADDRINUSE'
-        void vscode.window.showErrorMessage(
+        this.deps.notify?.(
           busy
-            ? `MLX: port ${port} is already in use — another VS Code window may already be serving the dashboard. Open it from that window, or change Web Ui: Port.`
+            ? `MLX: port ${port} is already in use — another VS Code window or the headless daemon may already be serving the dashboard. Open it from there, or change Web Ui: Port.`
             : `MLX: web UI failed to start — ${String(err)}`,
         )
         resolve(undefined)
@@ -62,7 +74,7 @@ export class WebUiServer implements vscode.Disposable {
         this.server = server
         const addr = server.address()
         this.port = typeof addr === 'object' && addr ? addr.port : port
-        log.info(`Web UI listening on http://127.0.0.1:${this.port} (token required)`)
+        this.deps.log.info(`Web UI listening on http://127.0.0.1:${this.port} (token required)`)
         resolve(this.url)
       })
     })
@@ -74,7 +86,7 @@ export class WebUiServer implements vscode.Disposable {
     this.server = undefined
     this.port = undefined
     await new Promise<void>((resolve) => s.close(() => resolve()))
-    log.info('Web UI stopped')
+    this.deps.log.info('Web UI stopped')
   }
 
   private async handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -95,7 +107,7 @@ export class WebUiServer implements vscode.Disposable {
     try {
       if (route.kind === 'page') {
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-        return void res.end(page(this.token))
+        return void res.end(page(this.token, this.deps.hostLabel ?? 'VS Code'))
       }
       if (route.kind === 'state') {
         return void this.json(res, {
@@ -120,7 +132,7 @@ export class WebUiServer implements vscode.Disposable {
       res.writeHead(404, { 'content-type': 'text/plain' })
       res.end('Not found')
     } catch (err) {
-      log.error('Web UI request failed', err)
+      this.deps.log.error('Web UI request failed', err)
       this.json(res, { ok: false, error: String(err) }, 500)
     }
   }
@@ -166,7 +178,7 @@ export class WebUiServer implements vscode.Disposable {
  * Self-contained on purpose: no external requests, so the page works offline
  * and cannot leak the token to a third party via a stylesheet or font.
  */
-function page(token: string): string {
+function page(token: string, hostLabel: string): string {
   return `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -194,7 +206,7 @@ function page(token: string): string {
            background: #3fb950; color: #000; border-radius: 6px; opacity: 0; transition: opacity .2s }
 </style>
 <h1>MLX Console</h1>
-<div class="muted">Editable dashboard · loopback only · token-authenticated</div>
+<div class="muted">Editable dashboard · loopback only · token-authenticated · served by ${hostLabel}</div>
 
 <h2>Server</h2>
 <div id="status" class="muted">loading…</div>

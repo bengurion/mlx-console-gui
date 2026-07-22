@@ -18,6 +18,24 @@ const extensionConfig = {
   logLevel: 'info',
 }
 
+/**
+ * The headless CLI: the same dashboard and server control with no VSCode.
+ * Bundled separately because it must not link the `vscode` module at all.
+ */
+/** @type {import('esbuild').BuildOptions} */
+const cliConfig = {
+  entryPoints: ['src/headless/cli.ts'],
+  bundle: true,
+  outfile: 'dist/cli.js',
+  platform: 'node',
+  format: 'cjs',
+  target: 'node18',
+  sourcemap: !production,
+  minify: production,
+  banner: { js: '#!/usr/bin/env node' },
+  logLevel: 'info',
+}
+
 const webviewEntry = 'webview/src/index.tsx'
 /** @type {import('esbuild').BuildOptions} */
 const webviewConfig = {
@@ -35,7 +53,7 @@ const webviewConfig = {
 }
 
 // The webview app is added in a later milestone; only build it once its entry exists.
-const configs = [extensionConfig]
+const configs = [extensionConfig, cliConfig]
 if (existsSync(webviewEntry)) configs.push(webviewConfig)
 
 if (watch) {

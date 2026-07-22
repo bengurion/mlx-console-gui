@@ -29,6 +29,9 @@
     "model manager"
   ],
   "main": "./dist/extension.js",
+  "bin": {
+    "mlx-console": "./dist/cli.js"
+  },
   "activationEvents": [
     "onStartupFinished"
   ],
