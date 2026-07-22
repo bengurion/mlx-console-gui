@@ -19,9 +19,9 @@ The same core ships two ways. Pick either, or run both — they cooperate rather
 
 | | **VS Code extension** (`.vsix`) | **Headless CLI** (`mlx-console`) |
 | --- | --- | --- |
-| **You get** | Activity-bar panels, model search and conversion, chat provider | Metrics, settings and server control, in a browser or a terminal |
+| **You get** | Activity-bar panels + the chat provider and `@mlx` participant | The same UI in a browser, plus terminal commands |
 | **Needs** | VS Code 1.125+ running | Nothing but Node and a venv with mlx-lm |
-| **Interface** | Native panels, or the same UI in a browser (on by default) | Compact dashboard + `status` / `start` / `stop` |
+| **Interface** | Native panels, or the same UI in a browser (on by default) | The same UI + `status` / `start` / `stop` |
 | **Dashboard auth** | Cross-site refused; token optional | Same |
 | **Runs at login** | No — dies with the editor | Yes, via launchd |
 | **Settings** | VS Code settings (`mlxConsole.*`) | `~/.mlx-console/config.json` |
@@ -246,11 +246,10 @@ Each VS Code window serves its own dashboard: the first takes port 8090, the res
 take an OS-assigned port — which is when the command is genuinely easier than guessing. Set
 `webUi.enabled` to false to turn it off.
 
-**From the CLI** — `mlx-console serve` needs no editor, and `mlx-console url` prints the
-address. It serves a compact page rather than the full UI: Hub *search* and downloads live in
-the extension host, so with VS Code closed there is nothing behind them. What the daemon does
-give you is live metrics, every setting, server control, and your local models — read by the
-same Python helper the extension uses, pointed at the same configured directory.
+**From the CLI** — `mlx-console serve` needs no editor at all, and serves the *same* UI. Hub
+search, downloads, conversion, models, metrics, settings: the daemon constructs the same
+services the extension does, and the same hub routes them. It shares the extension's storage
+too, so it uses the venv the extension built and sees the server it started.
 
 <details>
 <summary><b>How a page with no password stays safe</b></summary>

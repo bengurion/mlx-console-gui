@@ -22,6 +22,17 @@ import { HeadlessServer } from './serverControl'
 import { settingsCandidates } from './hostPaths'
 import { buildPlist, loadCommands, plistPath, unloadCommands, logPaths } from './launchd'
 import { parseArgs } from './args'
+import { setSettingsSource } from '../core/settings'
+import { setLogSink } from '../core/logging'
+import { EnvironmentManager } from '../backend/environmentManager'
+import { ServerManager } from '../backend/serverManager'
+import { PythonHelper } from '../backend/pythonHelper'
+import { HuggingFaceService } from '../services/huggingFaceService'
+import { CacheService } from '../services/cacheService'
+import { DownloadManager } from '../services/downloadManager'
+import { MetricsService } from '../services/metricsService'
+import { WebviewHub } from '../ui/webview/webviewHub'
+import { StoreSettings, headlessEnvHost, headlessHubHost, storageDir } from './headlessHost'
 import { PythonBridge, findHelper } from './pythonBridge'
 import type { LocalModel } from '../shared/protocol'
 
@@ -208,13 +219,73 @@ function modelLister(py: PythonBridge | undefined) {
   }
 }
 
+/**
+ * The whole application, without an editor.
+ *
+ * Every service here is the same class the extension constructs — same server
+ * manager, same metrics sampler, same hub — differing only in which host
+ * answers the questions that need a person. That is the point of the split:
+ * the daemon serves the real UI rather than an approximation of it.
+ */
+function buildApp(settings: SettingsStore, helper: string | undefined) {
+  const dir = storageDir()
+  const env = new EnvironmentManager(headlessEnvHost(dir))
+  const server = new ServerManager(env)
+  server.useSharedState(path.join(dir, 'server-state.json'))
+
+  const python = helper ? new PythonHelper(env, helper) : undefined
+  const metrics = new MetricsService(env, server)
+  const hub = python
+    ? new WebviewHub({
+        env,
+        server,
+        hf: new HuggingFaceService(),
+        cache: new CacheService(python),
+        downloads: new DownloadManager(python),
+        metrics,
+        packageJSON: pkg,
+        extensionUri: { fsPath: dir },
+        host: headlessHubHost(),
+      })
+    : undefined
+
+  void env.refresh()
+  return { env, server, metrics, hub }
+}
+
 async function serve(port?: number): Promise<void> {
   const settings = loadSettings()
+  // Everything downstream reads settings through this, exactly as the
+  // extension reads them through VSCode's configuration.
+  setSettingsSource(new StoreSettings(settings))
+
   const server = new HeadlessServer(settings)
   const uiPort = port ?? Number(settings.get('webUi.port', 8090))
   const listModels = modelLister(pythonBridge(server))
 
+  // The full panel UI when the helper script is beside us; the compact page
+  // otherwise, since without it there is nothing behind half the buttons.
+  const helper = findHelper(process.argv[1] ?? '')
+  const bundle = path.join(path.dirname(process.argv[1] ?? ''), 'webview', 'main.js')
+  const app = buildApp(settings, helper)
+  const fullUi = app.hub && fs.existsSync(bundle)
+  if (!fullUi) {
+    log.info(
+      helper
+        ? 'Panel bundle not found beside the CLI — serving the compact dashboard.'
+        : 'Helper script not found beside the CLI — serving the compact dashboard.',
+    )
+  }
+
   const ui = new WebUiServer({
+    app:
+      fullUi && app.hub
+        ? {
+            scriptPath: bundle,
+            attach: (sink) => app.hub!.attach(sink),
+            handleMessage: (sink, message) => app.hub!.handleMessage(sink, message),
+          }
+        : undefined,
     settings: () =>
       buildSettingsCatalog(properties(), (short) => settings.get(short)).map((s) => ({
         ...s,
@@ -289,6 +360,8 @@ async function serve(port?: number): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  // Core services log through core/logging; send that to the terminal.
+  setLogSink({ write: (level, message) => (level === 'ERROR' ? console.error : console.log)(message) })
   const args = parseArgs(process.argv.slice(2))
   if (args.help || args.command === 'help') return void console.log(HELP)
 
