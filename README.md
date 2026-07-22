@@ -15,25 +15,89 @@ whether a 120B model will actually fit in 128 GB. This collapses that into one p
 
 ## Why this exists
 
-Running a big model on Apple Silicon is mostly a memory problem, and the tooling is quiet
-about it. A few things this project learned the hard way, and now surfaces:
+Running a big model on Apple Silicon is mostly a memory problem, and almost every tool
+involved is quiet about it. You find out you were wrong when the machine starts swapping.
 
-- **Your GPU ceiling is not 100% of RAM.** Metal reports a
-  `max_recommended_working_set_size` — on a 128 GB M5 Max that is **107.5 GB**, not 128.
-  Most "will it fit?" advice online uses a fraction-of-RAM guess instead.
-- **KV cache is not free.** At a 131,072-token context, gpt-oss-120b needs ~72 KiB **per
-  token** of cache on top of its weights — about 9.7 GB. That is the difference between a
-  model that loads and one that swaps.
-- **`mlx_lm.server` never unloads.** It keeps exactly one model resident, loads it lazily
-  inside the first request, and evicts only when a different model displaces it. There is
-  no idle timeout, and no endpoint to ask what is loaded.
-- **Its defaults assume a shared server.** `--decode-concurrency` defaults to **32**
-  parallel sequences. On a single-user laptop with a large model, that is a lot of KV cache
-  for requests that will never arrive.
+Everything below was measured on a 128 GB M5 Max while building this. The extension reads
+these numbers live rather than assuming them — but they are worth knowing even if you never
+install it.
 
-The extension measures these rather than guessing, and says what it is doing.
+### The ceiling is lower than the spec sheet
 
----
+A 128 GB Mac does not give you 128 GB of GPU memory. Metal publishes its own limits, and
+`mx.device_info()` reports them:
+
+| | bytes | |
+|---|---|---|
+| `memory_size` | 137,438,953,472 | 128 GiB — the number on the box |
+| `max_recommended_working_set_size` | 115,448,725,504 | **107.5 GiB** — what Metal will actually let you allocate |
+| `max_buffer_length` | 86,586,540,032 | 80.6 GiB — the largest *single* allocation |
+
+Most "will it fit?" advice uses a fraction-of-RAM rule of thumb — 70%, 75%, sometimes 80%.
+On this machine the true figure is 84%, and it is *reported*, not guessed. Worth reading
+rather than estimating.
+
+### Your machine is not empty
+
+With no model loaded at all, this Mac sits at roughly **21.8 GB** in use — 4.9 GB wired,
+15.9 GB active, 1 GB compressed — and had already touched swap. Editor, browser, the OS
+itself.
+
+This is why "leave 8 GB for the system and give the GPU the rest" does not survive contact
+with reality: 8 GB is a third of what the machine already needs before a model appears.
+GPU-wired memory is also **non-evictable**, so macOS cannot page it out under pressure — it
+must squeeze everything else instead. That is the failure mode where the cursor beachballs
+and you reach for the power button.
+
+### KV cache is the cost nobody quotes
+
+Model weights are the number in the repo name. The cache is not, and it scales with context.
+
+For gpt-oss-120b: 36 layers × 8 KV heads × 64 head dim × 2 (K and V) × 2 bytes =
+**72 KiB per token**. At its full 131,072-token window that is **9.7 GB** of cache sitting
+on top of ~60 GB of weights.
+
+Two ways to get this badly wrong, both of which this project hit:
+
+- **Use `num_attention_heads` instead of `num_key_value_heads`.** gpt-oss has 64 attention
+  heads but only 8 KV heads — grouped-query attention. Confusing them overestimates cache by
+  **8×** and refuses models that fit comfortably.
+- **Trust `sliding_window`.** gpt-oss reports `sliding_window: 128` because it interleaves
+  local attention, yet still accepts the full 131,072 tokens. A parser preferring that field
+  advertises a 128-token context and breaks chat entirely.
+
+### The server is quieter than it looks
+
+`mlx_lm.server` is a good piece of software with a narrow interface, and a few behaviours
+are surprising until you read its source:
+
+- It holds **exactly one model**, loaded lazily *inside* the first request that names it.
+  Switching models stalls that request for the entire load — minutes, for a 60 GB model.
+- There is **no idle timeout and no eviction.** A model stays resident until a different one
+  displaces it or the process exits. There is no unload endpoint; freeing memory means
+  restarting the process.
+- `GET /v1/models` lists what is in your **Hugging Face cache**, not what is loaded. Nothing
+  in the API can tell you which model is actually resident.
+- A bare **404** is returned both for an unknown model *and* for an empty `messages` array.
+  The second one is easy to hit by accident and reads like a missing endpoint.
+
+### The defaults are written for a different machine
+
+`--decode-concurrency` defaults to **32** parallel sequences, each holding its own KV cache.
+At 9.7 GB per sequence that is 309 GB of cache the machine can never provide — a sensible
+default for a shared inference host, an odd one for a laptop serving a single editor.
+
+`--prompt-cache-bytes` has **no default at all**: the prompt cache is bounded only by entry
+count (10), so long conversations grow into whatever the model happens to leave free.
+
+### And some things cannot be measured
+
+Worth saying plainly, because the panel says it too: macOS exposes **no per-process GPU
+memory accounting**, at any privilege level. `ioreg` gives device-wide totals; `sudo
+powermetrics` adds per-process GPU *time* but still not memory. So when this extension
+reports how much memory other applications are holding, it is inferring — total in use,
+minus what our own model should account for. Directionally right, not exact, and labelled
+as such rather than presented as fact.
 
 ## What it does
 
