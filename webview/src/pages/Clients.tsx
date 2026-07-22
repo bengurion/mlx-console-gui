@@ -71,6 +71,12 @@ export function ClientsPage() {
         note="Check the server is answering before blaming the client."
         text={ext.snippets.curl}
       />
+
+      <Snippet
+        title="When a correct configuration looks broken"
+        note="Three things that produce misleading failures. All three were hit for real."
+        text={ext.snippets.gotchas}
+      />
     </div>
   )
 }

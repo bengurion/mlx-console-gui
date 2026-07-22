@@ -249,7 +249,7 @@ export interface ExternalClientsInfo {
   activeModel?: string
   hasApiKey: boolean
   exposeToLan: boolean
-  snippets: { opencode: string; copilot: string; vscode: string; curl: string }
+  snippets: { opencode: string; copilot: string; vscode: string; curl: string; gotchas: string }
 }
 
 export type RpcMethod =

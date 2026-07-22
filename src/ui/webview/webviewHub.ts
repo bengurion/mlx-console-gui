@@ -818,12 +818,34 @@ export class WebviewHub {
       `  -d '${JSON.stringify({ model, messages: [{ role: 'user', content: 'hello' }] })}'`,
     ].join('\n')
 
+    /*
+     * Two things that make a correct configuration look broken.
+     *
+     * Both were diagnosed from a real failure: a client pointed here timed
+     * out on its first request and its log showed 404s it never explained.
+     */
+    const gotchas = [
+      'The first request loads the model — minutes for a large one — and most',
+      'clients give up long before that, leaving a broken pipe in the server log.',
+      'Load the model from the Dashboard first; once resident, requests answer',
+      'immediately.',
+      '',
+      'Repeated 404s for /api/version mean something is probing this server as if',
+      "it were Ollama. mlx_lm.server does not speak Ollama's API — point the",
+      'OpenAI-compatible provider at it instead, and clear any Ollama endpoint',
+      'setting aimed here.',
+      '',
+      'gpt-oss models answer in the harmony format, so raw content arrives as',
+      '<|channel|>analysis...<|channel|>final. This extension strips it; other',
+      'clients will show the reasoning channel as part of the answer.',
+    ].join('\n')
+
     return {
       baseUrl,
       activeModel: this.deps.server.activeModel,
       hasApiKey,
       exposeToLan: Config.exposeToLan(),
-      snippets: { opencode, copilot, vscode, curl },
+      snippets: { opencode, copilot, vscode, curl, gotchas },
     }
   }
 
