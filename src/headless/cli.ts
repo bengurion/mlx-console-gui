@@ -351,10 +351,25 @@ async function serve(port?: number, keepServer = false): Promise<void> {
     requireToken: () => settings.get<boolean>('webUi.requireToken', false),
   })
 
-  const url = await ui.start(uiPort)
+  /*
+   * Take another port rather than failing.
+   *
+   * The extension serves the dashboard on 8090 by default, so a collision is
+   * the ordinary case rather than an error — and the previous behaviour was
+   * the worst of both: the bind failed, nothing was served, and the process
+   * stayed alive anyway because the proxy was still holding the loop open.
+   */
+  const url = await ui.start(uiPort, { onBusy: 'ephemeral' })
   if (!url) {
+    log.error(`Could not serve the dashboard on ${uiPort} or any free port.`)
+    await app.cleanEndpoint.stop()
     process.exitCode = 1
-  } else {
+    return
+  }
+  if (!url.includes(`:${uiPort}/`)) {
+    log.info(`Port ${uiPort} was taken — using ${new URL(url).port} instead.`)
+  }
+  {
     // With a token configured the URL is a credential, and under launchd
     // stdout is a 0644 log file — so print it only to a terminal and otherwise
     // leave it in a 0600 file that `mlx-console url` reads back.
@@ -368,7 +383,11 @@ async function serve(port?: number, keepServer = false): Promise<void> {
         : '  Ctrl-C stops the dashboard and the model server (--keep-server to leave it up).\n',
     )
     } else {
-      console.log(`MLX Console listening on 127.0.0.1:${uiPort} — run \`mlx-console url\` for the link.`)
+      // The port actually bound, not the one asked for — they differ whenever
+      // something else already had it.
+      console.log(
+        `MLX Console listening on 127.0.0.1:${new URL(url).port} — run \`mlx-console url\` for the link.`,
+      )
     }
   }
 
@@ -389,7 +408,13 @@ async function serve(port?: number, keepServer = false): Promise<void> {
       if (!keepServer) {
         const { stopped, forced } = await server.stopAll()
         const total = stopped.length + forced.length
-        if (total) log.info(`Stopped ${total} model server${total === 1 ? '' : 's'} on exit.`)
+        // Reported either way: silence here reads as "it did not clean up".
+        log.info(
+          total
+            ? `Stopped ${total} model server${total === 1 ? '' : 's'} on exit` +
+                (forced.length ? ` (${forced.length} needed SIGKILL).` : '.')
+            : 'No model servers were running.',
+        )
       }
       await ui.stop()
       done()
