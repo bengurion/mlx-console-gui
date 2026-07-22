@@ -70,12 +70,25 @@ export function manualCommand(home = os.homedir()): string {
  * A trailing newline matters: visudo rejects a file without one. The command
  * is written in full, so sudo matches it exactly rather than by prefix.
  */
+/**
+ * Escape an argument for a sudoers command spec.
+ *
+ * sudoers gives four characters syntactic meaning inside a command: a comma
+ * separates entries in a list, and `:`, `=` and `\` delimit other parts of the
+ * grammar. An unescaped comma in `--samplers tasks,gpu_power` makes visudo
+ * expect a second command path where `gpu_power` is, and reject the file — so
+ * the rule must escape what the executed command must not.
+ */
+export function sudoersEscape(arg: string): string {
+  return arg.replace(/([,:=\\])/g, '\\$1')
+}
+
 export function sudoersRule(user: string, command: string[] = sampleCommand()): string {
   return [
     '# Installed by MLX Console so per-process GPU sampling can run unattended.',
     '# Grants exactly one read-only telemetry command. Delete this file to revoke,',
     '# or use Disable in the Dashboard view.',
-    `${user} ALL=(root) NOPASSWD: ${command.join(' ')}`,
+    `${user} ALL=(root) NOPASSWD: ${command.map(sudoersEscape).join(' ')}`,
     '',
   ].join('\n')
 }
@@ -107,6 +120,9 @@ export function grantsPasswordless(sudoListOutput: string, command: string[]): b
   return sudoListOutput
     .split('\n')
     .filter((line) => /NOPASSWD:/i.test(line))
+    // `sudo -l` may echo the entry with its sudoers escapes intact, so compare
+    // against the unescaped form rather than guessing which one it printed.
+    .map((line) => line.replace(/\\([,:=\\])/g, '$1'))
     .some((line) => line.includes(wanted))
 }
 

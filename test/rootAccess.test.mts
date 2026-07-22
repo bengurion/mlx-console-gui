@@ -16,6 +16,7 @@ import {
   sampleCommand,
   samplePath,
   scrubForLog,
+  sudoersEscape,
   sudoersRule,
 } from '../src/services/rootAccess.ts'
 
@@ -32,7 +33,12 @@ test('the authorised command is exactly the one that will be run', () => {
   const cmd = sampleCommand('/Users/ben')
   const rule = sudoersRule('ben', cmd)
 
-  assert.ok(rule.includes(cmd.join(' ')), 'rule and sampler must not drift apart')
+  // The rule carries sudoers escapes, so compare after removing them: what
+  // must not drift is the command, not its encoding.
+  assert.ok(
+    rule.replace(/\\([,:=\\])/g, '$1').includes(cmd.join(' ')),
+    'rule and sampler must not drift apart',
+  )
   // The manual fallback shown in the UI has to be the same command too, or
   // someone copies one thing and the app runs another.
   assert.equal(manualCommand('/Users/ben'), `sudo ${cmd.join(' ')}`)
@@ -109,4 +115,28 @@ test('a grant for a different command does not count', () => {
     grantsPasswordless('    (root) NOPASSWD: /bin/rm -rf /tmp/x', sampleCommand('/Users/ben')),
     false,
   )
+})
+
+test('the rule escapes what sudoers treats as syntax, and visudo accepts it', () => {
+  const rule = sudoersRule('ben', sampleCommand('/Users/ben'))
+
+  // The comma in `--samplers tasks,gpu_power` is a list separator in sudoers:
+  // unescaped, visudo reports "expected a fully-qualified path name" and the
+  // whole file is rejected.
+  assert.ok(rule.includes('tasks\\,gpu_power'), 'the comma is escaped')
+  assert.equal(/[^\\],gpu_power/.test(rule), false, 'no bare comma survives')
+
+  assert.equal(sudoersEscape('a,b'), 'a\\,b')
+  assert.equal(sudoersEscape('a:b=c'), 'a\\:b\\=c')
+  assert.equal(sudoersEscape('back\\slash'), 'back\\\\slash')
+  assert.equal(sudoersEscape('/usr/bin/powermetrics'), '/usr/bin/powermetrics', 'paths untouched')
+})
+
+test('a grant is recognised whether sudo echoes it escaped or not', () => {
+  const command = sampleCommand('/Users/ben')
+  const plain = `    (root) NOPASSWD: ${command.join(' ')}`
+  const escaped = `    (root) NOPASSWD: ${command.map(sudoersEscape).join(' ')}`
+
+  assert.equal(grantsPasswordless(plain, command), true)
+  assert.equal(grantsPasswordless(escaped, command), true, 'escapes are normalised away')
 })
