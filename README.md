@@ -79,6 +79,95 @@ the server, not the point of the extension.
 
 ---
 
+## Configuration
+
+Every setting is editable in the **Server & Settings** panel — you should not need to open
+VS Code's settings editor. Sizes accept `8 GB` / `512 MB`; a bare number means MB.
+
+### Which ones actually matter
+
+Most defaults are fine. These are the ones worth understanding:
+
+**`contextWindow`** — leave it unset. The extension reads each model's real window from its
+own `config.json` and shrinks it if the KV cache would not fit in the memory you have left.
+Setting it yourself overrides both of those, which is occasionally what you want (forcing a
+short context to save memory) and usually not.
+
+**`server.promptCacheBytes`** — `mlx_lm.server` leaves this **unbounded**, trimming only
+after 10 cached conversations, so it can quietly grow into whatever the model left free.
+The Metrics panel computes a recommendation from live headroom; a few GB is plenty.
+
+**`server.decodeConcurrency`** — the server default is 32 parallel sequences, each with its
+own KV cache. For a single editor, **1–4** is realistic; the Metrics panel will tell you
+what your headroom actually supports.
+
+**`modelsDir`** — where weights land. Point it somewhere with room, and preferably outside
+your project folder; a 120B model at 4-bit is around 60 GB.
+
+**`sampling.*`** — only set these if you disagree with the model. Anything you leave alone
+falls back to the model's own `generation_config.json`, which is usually tuned better than
+a global default. Disabling values (`topK` 0, `minP` 0, `repetitionPenalty` 1) are omitted
+from requests entirely rather than pinning a sampler you did not ask for.
+
+**`server.draftModel`** — speculative decoding. The draft must share the target's exact
+tokenizer, so the Metrics panel matches candidates on `vocab_size` rather than by name, and
+its weights load *in addition* to the main model.
+
+### Full reference
+
+Generated from the manifest, so it always matches the build.
+
+<!-- settings:start -->
+
+#### General
+
+| Setting | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `pythonPath` | string | _(empty)_ | Path to a Python 3 interpreter used to create the managed virtual environment. Leave empty to auto-detect. |
+| `venvPath` | string | _(empty)_ | Directory for the managed Python virtual environment where mlx-lm is installed. venv (if it has mlx-lm) or the extension's global storage. |
+| `modelsDir` | string | _(empty)_ | Directory where models are downloaded and cached (sets HF_HOME; models live under <dir>/hub). server and the Hugging Face CLI. cache/huggingface). |
+| `defaultModel` | string | _(empty)_ | Default MLX model repo id used for chat when none is selected. |
+| `contextWindow` | number | `131072` | Context window advertised to VS Code for MLX models (`maxInputTokens`). |
+| `maxOutputTokens` | number | `4096` | Maximum tokens an MLX model may generate in one response. |
+| `modelOverrides` | object | `{}` | Per-model generation overrides, keyed by model id (or a converted model's local path). *` defaults. |
+
+#### Server
+
+| Setting | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `server.host` | string | `127.0.0.1` | server binds to (ignored when Expose to LAN is on). |
+| `server.port` | number | `8080` | server. |
+| `server.autoStart` | boolean | `true` | Start the server automatically when it is first needed. |
+| `server.exposeToLan` | boolean | `false` | 0 so other machines/tools can reach it. Security risk on untrusted networks. |
+| `server.apiKey` | string | _(empty)_ | Optional bearer token required for served requests (also shown in external-client snippets). |
+| `server.extraArgs` | array | `[]` | g. context/KV-cache limits, chat template). server --help` to see available flags. |
+| `server.promptCacheSize` | number | `0` | server --prompt-cache-size). 0 uses the server default. |
+| `server.promptCacheBytes` | number | `0` | server --prompt-cache-bytes`). Accepts a size such as `8 GB` or `512 MB`; a bare number is read as MB. |
+| `server.decodeConcurrency` | number | `0` | server --decode-concurrency`). 7 GB. The server default is 32, sized for a shared inference host — a single-user editor rarely needs more than 1–4. |
+| `server.promptConcurrency` | number | `0` | server --prompt-concurrency`). Server default 8. Raises prefill throughput for concurrent requests at the cost of transient memory. |
+| `server.prefillStepSize` | number | `0` | server --prefill-step-size`). Server default 2048. |
+| `server.draftModel` | string | _(empty)_ | server --draft-model`). Loaded in addition to the main model, so its weights count against the same GPU ceiling — check headroom in Metrics first. |
+| `server.numDraftTokens` | number | `0` | server --num-draft-tokens`). Server default 3. Only used when a draft model is set. 0 leaves the server default. |
+
+#### Sampling
+
+| Setting | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `sampling.temperature` | number | `0.7` | Sampling temperature. Lower is more deterministic (good for code). |
+| `sampling.topP` | number | `1` | Nucleus sampling top-p. 0 disables it. |
+| `sampling.topK` | number | `0` | Top-k sampling. 0 disables it. |
+| `sampling.minP` | number | `0` | Min-p sampling. 0 disables it. |
+| `sampling.repetitionPenalty` | number | `1` | Repetition penalty. 0 disables it. |
+| `sampling.maxTokens` | number | `2048` | Maximum tokens generated per response. |
+
+#### Hugging Face
+
+| Setting | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `huggingFace.token` | string | _(empty)_ | Optional Hugging Face token for higher rate limits and gated models. |
+
+<!-- settings:end -->
+
 ## Requirements
 
 - **macOS on Apple Silicon (arm64).** The extension checks for `darwin`/`arm64` and will
