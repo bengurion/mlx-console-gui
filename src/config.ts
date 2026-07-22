@@ -90,6 +90,14 @@ export const Config = {
   numDraftTokens(): number {
     return positive(cfg().get<number>('server.numDraftTokens', 0))
   },
+  /** Local dashboard: loopback only, opt-in. */
+  webUiEnabled(): boolean {
+    return cfg().get<boolean>('webUi.enabled', false)
+  },
+  webUiPort(): number {
+    const n = cfg().get<number>('webUi.port', 8090)
+    return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 8090
+  },
   defaultModel(): string {
     return cfg().get<string>('defaultModel', '').trim()
   },

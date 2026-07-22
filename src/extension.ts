@@ -1,5 +1,6 @@
 import * as vscode from 'vscode'
 import { initLogger, log } from './util/logger'
+import { Config } from './config'
 import * as path from 'node:path'
 import { EnvironmentManager } from './backend/environmentManager'
 import { ServerManager } from './backend/serverManager'
@@ -14,6 +15,7 @@ import { registerParticipant } from './chat/participant'
 import { registerLmChatProvider } from './chat/lmChatProvider'
 import { registerTools } from './chat/tools'
 import { MetricsService } from './services/metricsService'
+import { WebUiServer } from './services/webUiServer'
 import { ReviewService } from './features/reviewService'
 
 export async function activate(context: vscode.ExtensionContext) {
@@ -64,6 +66,49 @@ export async function activate(context: vscode.ExtensionContext) {
 
   registerWebviews(context, hub)
 
+  // Optional local dashboard. Loopback only; see services/webUi.ts for why the
+  // token matters even though nothing is exposed off-machine.
+  const webUi = new WebUiServer({
+    settings: () => hub.settingsCatalog(),
+    updateSetting: (key, value) => hub.updateSetting({ key, value }),
+    state: () => hub.webUiState(),
+    serverAction: async (action) => {
+      if (action === 'start') return { ok: await server.ensureRunning(true) }
+      if (action === 'stop') return await server.stop().then(() => ({ ok: true }))
+      if (action === 'restart') return { ok: await server.restart() }
+      return await hub.unloadModel()
+    },
+  })
+  context.subscriptions.push(webUi)
+
+  const syncWebUi = async () => {
+    if (Config.webUiEnabled()) await webUi.start(Config.webUiPort())
+    else await webUi.stop()
+  }
+  void syncWebUi()
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('mlxConsole.openWebUi', async () => {
+      if (!Config.webUiEnabled()) {
+        const pick = await vscode.window.showInformationMessage(
+          'The local dashboard is disabled.',
+          { modal: true, detail: 'Enable mlxConsole.webUi.enabled to serve it on 127.0.0.1.' },
+          'Enable',
+        )
+        if (pick !== 'Enable') return
+        await vscode.workspace
+          .getConfiguration('mlxConsole')
+          .update('webUi.enabled', true, vscode.ConfigurationTarget.Global)
+        await syncWebUi()
+      }
+      const url = webUi.url
+      if (!url) return void vscode.window.showErrorMessage('MLX: the dashboard is not listening.')
+      // The URL carries the session token, so open it rather than asking the
+      // user to copy one.
+      void vscode.env.openExternal(vscode.Uri.parse(url))
+    }),
+  )
+
   context.subscriptions.push(
     vscode.commands.registerCommand('mlxConsole.setup', () => env.ensureReady(true)),
     vscode.commands.registerCommand('mlxConsole.showLogs', () => log.show()),
@@ -107,6 +152,7 @@ export async function activate(context: vscode.ExtensionContext) {
       void env.refresh().then(() => hub.refreshStatus())
       // Model metadata is looked up under modelsDir, so its caches must go.
       if (e.affectsConfiguration('mlxConsole.modelsDir')) hub.refreshModelProfile()
+      if (e.affectsConfiguration('mlxConsole.webUi')) void syncWebUi()
       const serverAffecting =
         e.affectsConfiguration('mlxConsole.server') || e.affectsConfiguration('mlxConsole.modelsDir')
       if (serverAffecting && (server.state === 'ready' || server.state === 'starting')) {

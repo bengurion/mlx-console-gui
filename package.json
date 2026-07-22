@@ -186,6 +186,11 @@
         "command": "mlxConsole.showMenu",
         "title": "Show Menu",
         "category": "MLX"
+      },
+      {
+        "command": "mlxConsole.openWebUi",
+        "title": "Open Web Dashboard (local)",
+        "category": "MLX"
       }
     ],
     "menus": {
@@ -251,6 +256,16 @@
           "type": "string",
           "default": "",
           "description": "Optional bearer token required for served requests (also shown in external-client snippets)."
+        },
+        "mlxConsole.webUi.enabled": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Serve an editable dashboard on `http://127.0.0.1`. **Loopback only** — it ignores Expose to LAN and cannot be reached from another machine. Every request needs a per-session token, because any web page open in your browser can send requests to localhost. Off by default."
+        },
+        "mlxConsole.webUi.port": {
+          "type": "number",
+          "default": 8090,
+          "markdownDescription": "Port for the local dashboard. Use 0 to let the OS pick a free one. Bound to 127.0.0.1 regardless."
         },
         "mlxConsole.server.extraArgs": {
           "type": "array",

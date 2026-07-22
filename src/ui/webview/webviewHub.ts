@@ -126,7 +126,7 @@ export class WebviewHub {
    * drops weights only when a different model displaces them. Restarting the
    * process is therefore the only way to release either.
    */
-  private async unloadModel(): Promise<{ ok: boolean }> {
+  async unloadModel(): Promise<{ ok: boolean }> {
     const loaded = this.deps.server.loadedModel ?? this.deps.server.activeModel
     const pick = await vscode.window.showWarningMessage(
       loaded ? `Clear caches and reload ${loaded}?` : 'Restart the server to clear caches?',
@@ -216,6 +216,22 @@ export class WebviewHub {
     }
   }
 
+  /** Compact state for the local web dashboard. */
+  async webUiState(): Promise<unknown> {
+    const s = this.deps.server.status
+    const m = await this.deps.metrics.sampleOnce().catch(() => undefined)
+    return {
+      serverState: s.state,
+      loadedModel: s.loadedModel ?? s.activeModel,
+      modelState: s.modelState,
+      baseUrl: s.baseUrl,
+      occupiedBytes: m?.occupiedBytes,
+      ceilingBytes: m?.wiredLimitBytes ?? m?.gpu.maxRecommendedWorkingSetBytes,
+      cpuPercent: m?.cpu.percent,
+      gpuPercent: m?.gpu.utilizationPercent,
+    }
+  }
+
   /** Read a model's own files and broadcast the result. */
   private async pushModelProfile(modelId: string): Promise<void> {
     try {
@@ -240,7 +256,7 @@ export class WebviewHub {
   }
 
   /** All contributed settings with their effective values. */
-  private settingsCatalog(): SettingSpec[] {
+  settingsCatalog(): SettingSpec[] {
     const cfg = vscode.workspace.getConfiguration('mlxConsole')
     return buildSettingsCatalog(
       this.deps.packageJSON.contributes?.configuration?.properties,
@@ -254,7 +270,7 @@ export class WebviewHub {
    * Values are coerced against the declared type first so a malformed JSON
    * blob is reported rather than persisted.
    */
-  private async updateSetting(params: {
+  async updateSetting(params: {
     key?: string
     value?: unknown
   }): Promise<{ ok: boolean; error?: string; settings?: SettingSpec[] }> {

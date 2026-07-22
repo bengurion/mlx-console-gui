@@ -164,6 +164,13 @@ its weights load *in addition* to the main model.
 | --- | --- | --- | --- |
 | `huggingFace.token` | string | _(empty)_ | Optional Hugging Face token for higher rate limits and gated models. |
 
+#### webUi
+
+| Setting | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `webUi.enabled` | boolean | `false` | 1`. Loopback only — it ignores Expose to LAN and cannot be reached from another machine. |
+| `webUi.port` | number | `8090` | Port for the local dashboard. Use 0 to let the OS pick a free one. 1 regardless. |
+
 <!-- settings:end -->
 
 ## Requirements
