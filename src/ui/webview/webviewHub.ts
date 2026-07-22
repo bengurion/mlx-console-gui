@@ -633,10 +633,15 @@ export class WebviewHub {
         if (res.ok) this.startProcessGpuPolling()
         return res
       }
-      case 'rootGpuStatus':
+      case 'rootGpuStatus': {
         // The command travels with the status so the copy-and-run fallback is
         // the exact command the grant covers, not an approximation of it.
-        return { enabled: await this.rootSampler.isEnabled(), command: manualCommand() }
+        const enabled = await this.rootSampler.isEnabled()
+        // Authorised in an earlier session: start the timer now rather than
+        // waiting for someone to press a button that has nothing to fix.
+        if (enabled) this.startProcessGpuPolling()
+        return { enabled, command: manualCommand() }
+      }
       case 'enableRootGpu': {
         // Used here and nowhere else: not stored, not logged, not echoed back.
         const secret = String((params as { secret?: unknown })?.secret ?? '')
@@ -759,13 +764,28 @@ export class WebviewHub {
     )
     const key = hasApiKey ? '(your configured key)' : 'any non-empty value'
 
+    /*
+     * The UI, not a settings file.
+     *
+     * `github.copilot.chat.customOAIModels` is read only as a deprecated value
+     * in current Copilot builds — it is migrated into the extension's own
+     * storage and no longer declared as a setting — so hand-editing
+     * settings.json quietly does nothing. Manage Models is the route that
+     * works, and it stores the provider itself.
+     */
     const copilot = [
-      'GitHub Copilot Chat → model picker → Manage Models → Add provider',
-      'Provider type: OpenAI-compatible',
-      `Base URL: ${baseUrl}`,
-      `API key: ${key}`,
+      'Chat model picker → Manage Models → OpenAI Compatible',
       '',
-      'Note: BYOK in VS Code needs a Copilot Business/Enterprise seat.',
+      `Base URL: ${baseUrl}`,
+      `API key:  ${key}`,
+      `Model id: ${model}`,
+      '',
+      'The URL ends at /v1 — VS Code appends /chat/completions itself.',
+      '',
+      'Do not use github.copilot.chat.customOAIModels in settings.json: it is',
+      'deprecated and migrated away, so entries there are ignored.',
+      'BYOK also needs a Copilot Business or Enterprise seat; without one, use',
+      'the Continue route above, which has no such requirement.',
     ].join('\n')
 
     /*
