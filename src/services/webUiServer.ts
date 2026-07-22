@@ -478,6 +478,9 @@ function page(token: string, hostLabel: string): string {
   <button data-act="clear">Clear &amp; reload</button>
 </div>
 
+<h2>Models</h2>
+<div id="models" class="muted">scanning…</div>
+
 <h2>Settings</h2>
 <div id="settings"></div>
 <div id="saved">saved</div>
@@ -532,6 +535,24 @@ async function refresh() {
     (st.occupiedBytes ? ' · ' + gb(st.occupiedBytes) + ' of ' + gb(st.ceilingBytes) : '');
   const pct = st.occupiedBytes && st.ceilingBytes ? Math.min(100, st.occupiedBytes / st.ceilingBytes * 100) : 0;
   document.getElementById('mem').style.width = pct + '%';
+
+  // Scanned by the Python helper against the configured models directory, so
+  // this is what the server can actually load — not a guess from the filesystem.
+  const models = st.models || [];
+  const box = document.getElementById('models');
+  box.textContent = '';
+  if (!models.length) {
+    box.textContent = 'No models found in the configured models directory.';
+  } else {
+    for (const m of models) {
+      const row = document.createElement('div'); row.className = 'row';
+      const name = document.createElement('label');
+      const resident = m.repo === st.loadedModel;
+      name.innerHTML = '<div>' + m.repo + (resident ? ' <b>· resident</b>' : '') +
+        '</div><div class="k muted">' + (m.sizeBytes ? gb(m.sizeBytes) : '—') + '</div>';
+      row.append(name); box.append(row);
+    }
+  }
 
   const host = document.getElementById('settings');
   if (host.dataset.built) return sync(settings);

@@ -22,6 +22,8 @@ import { HeadlessServer } from './serverControl'
 import { settingsCandidates } from './hostPaths'
 import { buildPlist, loadCommands, plistPath, unloadCommands, logPaths } from './launchd'
 import { parseArgs } from './args'
+import { PythonBridge, findHelper } from './pythonBridge'
+import type { LocalModel } from '../shared/protocol'
 
 const run = promisify(execFile)
 
@@ -32,6 +34,7 @@ const HELP = `mlx-console ${pkg.version} — MLX Console without VS Code
   mlx-console stop               stop mlx_lm.server
   mlx-console restart            restart mlx_lm.server
   mlx-console status [--json]    what is running, and what it costs
+  mlx-console models [--json]    local models, scanned from your models directory
   mlx-console url                print the dashboard link
   mlx-console install [--port N] run the dashboard at login (launchd)
   mlx-console uninstall          remove the launchd agent
@@ -100,6 +103,20 @@ async function readDeviceInfo(venv?: string): Promise<Record<string, number> | u
   return deviceInfo
 }
 
+/**
+ * The Python helper, pointed at the configured models directory.
+ *
+ * Undefined when there is no venv or the script is not beside us — both are
+ * ordinary situations (a fresh machine, a CLI copied somewhere odd), so the
+ * caller degrades rather than fails.
+ */
+function pythonBridge(server: HeadlessServer): PythonBridge | undefined {
+  const venv = server.venv()
+  const helper = findHelper(process.argv[1] ?? '')
+  if (!venv || !helper) return undefined
+  return new PythonBridge({ venv, helper, env: server.processEnv() })
+}
+
 /** Machine metrics, read the same way the extension reads them. */
 async function metrics(pid?: number, venv?: string) {
   const out: Record<string, unknown> = {}
@@ -155,10 +172,47 @@ function clearUrlFile(): void {
   }
 }
 
+/**
+ * Local models for the dashboard, cached.
+ *
+ * Scanning walks the whole cache directory, which takes real time on a disk
+ * holding 60 GB of weights — far too slow to repeat on every 3-second poll.
+ * A stale-while-revalidate cache keeps the page responsive and the list fresh
+ * enough for something that only changes when you download or delete.
+ */
+const MODEL_CACHE_MS = 60_000
+
+function modelLister(py: PythonBridge | undefined) {
+  let cached: LocalModel[] = []
+  let at = 0
+  let inFlight: Promise<void> | undefined
+
+  return async (): Promise<LocalModel[]> => {
+    if (!py) return []
+    const stale = Date.now() - at > MODEL_CACHE_MS
+    if (stale && !inFlight) {
+      inFlight = py
+        .scan()
+        .then((models) => {
+          cached = models
+          at = Date.now()
+        })
+        .catch((err) => log.error('Model scan failed', err))
+        .finally(() => {
+          inFlight = undefined
+        })
+      // Block only on the first scan; later ones refresh behind the page.
+      if (!at) await inFlight
+    }
+    return cached
+  }
+}
+
 async function serve(port?: number): Promise<void> {
   const settings = loadSettings()
   const server = new HeadlessServer(settings)
   const uiPort = port ?? Number(settings.get('webUi.port', 8090))
+  const listModels = modelLister(pythonBridge(server))
 
   const ui = new WebUiServer({
     settings: () =>
@@ -193,6 +247,7 @@ async function serve(port?: number): Promise<void> {
           mem?.totalBytes,
         cpuPercent: proc?.cpuPercent,
         gpuPercent: gpu?.utilizationPercent,
+        models: await listModels(),
       }
     },
     serverAction: async (action) => {
@@ -305,6 +360,26 @@ async function main(): Promise<void> {
       return
     }
 
+    case 'models': {
+      const server = new HeadlessServer(loadSettings())
+      const py = pythonBridge(server)
+      if (!py) {
+        console.error('No mlx-lm environment or helper script found — run `mlx-console config`.')
+        process.exitCode = 1
+        return
+      }
+      const models = await py.scan()
+      if (args.json) return void console.log(JSON.stringify(models, null, 2))
+      if (!models.length) return void console.log('No models in the configured models directory.')
+      const resident = (await server.status()).loadedModel
+      for (const m of models) {
+        const size = m.sizeBytes ? `${(m.sizeBytes / 1024 ** 3).toFixed(1)} GB` : '—'
+        console.log(`${m.repo === resident ? '*' : ' '} ${size.padStart(9)}  ${m.repo}`)
+      }
+      if (resident) console.log('\n* resident in the running server')
+      return
+    }
+
     case 'url': {
       try {
         process.stdout.write(fs.readFileSync(URL_FILE, 'utf8'))
@@ -319,7 +394,11 @@ async function main(): Promise<void> {
       const settings = loadSettings()
       console.log(`config:   ${path.join(os.homedir(), '.mlx-console', 'config.json')}`)
       console.log(`seeded:   ${settingsCandidates().find((f) => fs.existsSync(f)) ?? 'no VS Code settings found'}`)
-      console.log(`venv:     ${new HeadlessServer(settings).venv() ?? 'not found'}`)
+      const server = new HeadlessServer(settings)
+      console.log(`venv:     ${server.venv() ?? 'not found'}`)
+      // The path Python will actually scan, not the setting as typed.
+      console.log(`HF_HOME:  ${server.processEnv().HF_HOME ?? '(default) ~/.cache/huggingface'}`)
+      console.log(`helper:   ${findHelper(process.argv[1] ?? '') ?? 'not found'}`)
       return
     }
 

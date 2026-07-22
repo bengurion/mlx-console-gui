@@ -13,6 +13,7 @@ import {
 import { resolveVenv, venvCandidates, settingsCandidates } from '../src/headless/hostPaths.ts'
 import { buildPlist, loadCommands, xmlEscape, LABEL } from '../src/headless/launchd.ts'
 import { parseArgs } from '../src/headless/args.ts'
+import { findHelper, lastJsonLine, pythonError } from '../src/headless/pythonBridge.ts'
 
 // ---- server arguments ------------------------------------------------------
 
@@ -182,4 +183,32 @@ test('commands and flags parse in either order', () => {
 test('a bad port is ignored rather than becoming NaN', () => {
   assert.equal(parseArgs(['serve', '--port', 'abc']).port, undefined)
   assert.equal(parseArgs(['serve', '--port', '-1']).port, undefined)
+})
+
+// ---- the Python helper -----------------------------------------------------
+
+test('the helper script is found beside the CLI in either layout', () => {
+  const repo = findHelper('/repo/dist/cli.js', (p) => p === '/repo/resources/py/mlx_console_helper.py')
+  assert.equal(repo, '/repo/resources/py/mlx_console_helper.py')
+
+  const nested = findHelper('/ext/out/dist/cli.js', (p) => p === '/ext/out/resources/py/mlx_console_helper.py')
+  assert.equal(nested, '/ext/out/resources/py/mlx_console_helper.py')
+
+  assert.equal(findHelper('/nowhere/cli.js', () => false), undefined)
+})
+
+test('the last JSON line wins, so helper chatter is ignored', () => {
+  assert.deepEqual(lastJsonLine('loading...\n{"ok":true,"models":[]}\n'), { ok: true, models: [] })
+  assert.deepEqual(lastJsonLine('  {"ok":false}  '), { ok: false })
+})
+
+test('a traceback is reported by its last line, not the whole dump', () => {
+  const trace = [
+    'Traceback (most recent call last):',
+    '  File "helper.py", line 1, in <module>',
+    '    scan()',
+    'huggingface_hub.errors.CacheNotFound: cache not found',
+  ].join('\n')
+  assert.equal(pythonError(trace, 1).message, 'huggingface_hub.errors.CacheNotFound: cache not found')
+  assert.equal(pythonError('', 2).message, 'helper exited with code 2')
 })

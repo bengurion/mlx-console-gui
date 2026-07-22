@@ -247,9 +247,10 @@ take an OS-assigned port — which is when the command is genuinely easier than 
 `webUi.enabled` to false to turn it off.
 
 **From the CLI** — `mlx-console serve` needs no editor, and `mlx-console url` prints the
-address. It serves a compact page rather than the full UI: model search, downloads and
-conversion live in the extension host, so with VS Code closed there is nothing behind them.
-What the daemon does give you is live metrics, every setting, and server control.
+address. It serves a compact page rather than the full UI: Hub *search* and downloads live in
+the extension host, so with VS Code closed there is nothing behind them. What the daemon does
+give you is live metrics, every setting, server control, and your local models — read by the
+same Python helper the extension uses, pointed at the same configured directory.
 
 <details>
 <summary><b>How a page with no password stays safe</b></summary>
@@ -295,6 +296,7 @@ dashboard needs is a process, a settings file and some `ioreg` / `vm_stat` outpu
 mlx-console serve                 # the dashboard, no VS Code
 mlx-console start | stop | restart
 mlx-console status [--json]       # the terminal version of the metrics panel
+mlx-console models [--json]       # local models, scanned from your models directory
 mlx-console url                   # the tokenised dashboard link
 mlx-console config                # where settings and the venv were found
 mlx-console install [--port N]    # run the dashboard at login
@@ -307,7 +309,17 @@ server:  ready (pid 4821) on port 8080
 model:   mlx-community/gpt-oss-120b-4bit
 memory:  62.1 GB held by the server
 venv:    …/globalStorage/mlx-console.mlx-console-vscode/venv
+
+$ mlx-console models
+*    76.9 GB  lmstudio-community/gpt-oss-120b-MLX-8bit
+
+* resident in the running server
 ```
+
+`models` is not a directory listing. It runs the extension's own Python helper inside your
+venv with `HF_HOME` set from `modelsDir`, so `huggingface_hub` reports what the server can
+actually load — snapshots, symlinks and partial downloads accounted for. `mlx-console config`
+prints the path it will scan, which is worth checking before wondering where a model went.
 
 **They share one server, not two.** The CLI reads the same registry file the extension
 writes, so `status` reports the model VS Code loaded and `stop` stops it. Both build the

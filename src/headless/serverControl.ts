@@ -122,7 +122,7 @@ export class HeadlessServer {
     })
 
     // Detached, as in the extension: the server outlives whatever started it.
-    const proc = spawn(bin, args, { env: this.env(), detached: true, stdio: 'ignore' })
+    const proc = spawn(bin, args, { env: this.processEnv(), detached: true, stdio: 'ignore' })
     proc.unref()
     return { ok: true, message: `Started mlx_lm.server (pid ${proc.pid}) on port ${this.port}.` }
   }
@@ -159,8 +159,14 @@ export class HeadlessServer {
     return this.start()
   }
 
-  /** Same environment the extension gives the server, minus the VSCode APIs. */
-  private env(): NodeJS.ProcessEnv {
+  /**
+   * Same environment the extension gives the server, minus the VSCode APIs.
+   *
+   * Public because the Python helper needs the identical HF_HOME: it scans
+   * whatever `modelsDir` points at, and a helper pointed somewhere else would
+   * report a different set of models than the server can actually load.
+   */
+  processEnv(): NodeJS.ProcessEnv {
     const env: NodeJS.ProcessEnv = { ...process.env }
     const modelsDir = this.settings.get<string>('modelsDir', '').trim()
     if (modelsDir) {
