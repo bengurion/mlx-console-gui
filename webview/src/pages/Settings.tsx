@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { rpc, openSettings } from '../api'
 import type { SettingSpec } from '../../../src/shared/protocol'
 
@@ -164,6 +164,7 @@ function Field({
 export function SettingsPage() {
   const [settings, setSettings] = useState<SettingSpec[]>([])
   const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
   const [filter, setFilter] = useState('')
 
   useEffect(() => {
@@ -187,8 +188,24 @@ export function SettingsPage() {
     (s) => JSON.stringify(s.value) !== JSON.stringify(s.default),
   ).length
 
+  /**
+   * "Change" links elsewhere in the UI ask the host to open its settings
+   * editor. A browser has none, so the shell turns that request into this
+   * event and the panel reveals the setting itself.
+   */
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      const key = String((e as CustomEvent).detail ?? '').replace(/^mlxConsole\./, '')
+      setOpen(true)
+      setFilter(key)
+      requestAnimationFrame(() => ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+    }
+    window.addEventListener('mlx:open-settings', onOpen)
+    return () => window.removeEventListener('mlx:open-settings', onOpen)
+  }, [])
+
   return (
-    <div className="card col">
+    <div className="card col" ref={ref}>
       <div className="row spread">
         <strong>Settings</strong>
         <a onClick={() => setOpen(!open)}>{open ? 'Hide' : `Edit (${settings.length})`}</a>

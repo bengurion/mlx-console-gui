@@ -44,3 +44,58 @@ test('buildSearchUrl omits optional filters when disabled', () => {
   assert.doesNotMatch(url, /author=/)
   assert.doesNotMatch(url, /search=/)
 })
+
+// ---- search caching --------------------------------------------------------
+
+test('an identical search is served from cache, and concurrent ones share a request', async () => {
+  const { HuggingFaceService } = await import('../src/services/huggingFaceService.ts')
+  const svc = new HuggingFaceService()
+
+  let calls = 0
+  const realFetch = globalThis.fetch
+  globalThis.fetch = (async () => {
+    calls++
+    // One slow response, so the second caller arrives while it is in flight.
+    await new Promise((r) => setTimeout(r, 30))
+    return new Response(JSON.stringify([{ id: 'org/model-4bit', tags: ['mlx'], siblings: [] }]), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })
+  }) as typeof fetch
+
+  try {
+    const query = { text: 'qwen', libraryMlx: true, sort: 'downloads' as const, limit: 10 }
+    const [a, b] = await Promise.all([svc.search(query), svc.search(query)])
+    assert.equal(calls, 1, 'two concurrent identical searches make one request')
+    assert.deepEqual(a, b)
+
+    await svc.search(query)
+    assert.equal(calls, 1, 'a repeat within the TTL does not hit the network')
+
+    await svc.search({ ...query, text: 'llama' })
+    assert.equal(calls, 2, 'a different query still searches')
+  } finally {
+    globalThis.fetch = realFetch
+  }
+})
+
+test('a failed search is not cached, so the next attempt retries', async () => {
+  const { HuggingFaceService } = await import('../src/services/huggingFaceService.ts')
+  const svc = new HuggingFaceService()
+
+  let calls = 0
+  const realFetch = globalThis.fetch
+  globalThis.fetch = (async () => {
+    calls++
+    return new Response('nope', { status: 503 })
+  }) as typeof fetch
+
+  try {
+    const query = { text: 'x', libraryMlx: true, sort: 'downloads' as const, limit: 5 }
+    await assert.rejects(() => svc.search(query))
+    await assert.rejects(() => svc.search(query))
+    assert.equal(calls, 2, 'the failure was retried rather than remembered')
+  } finally {
+    globalThis.fetch = realFetch
+  }
+})

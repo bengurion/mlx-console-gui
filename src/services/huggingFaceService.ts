@@ -1,7 +1,7 @@
-import { Config } from '../config'
-import { log } from '../core/logging'
-import { HF_API, buildSearchUrl, deriveQuant } from './hfQuery'
-import { bytesFromSafetensors, classifyFormat, estimateBytes, isGguf } from './modelFit'
+import { Config } from '../config.ts'
+import { log } from '../core/logging.ts'
+import { HF_API, buildSearchUrl, deriveQuant } from './hfQuery.ts'
+import { bytesFromSafetensors, classifyFormat, estimateBytes, isGguf } from './modelFit.ts'
 import type { ModelSummary, SearchQuery } from '../shared/protocol'
 
 interface HfModel {
@@ -23,8 +23,25 @@ interface HfModelInfo {
 const SIZE_CONCURRENCY = 6
 
 /** Read-only client for the public Hugging Face Hub search + model APIs. */
+/**
+ * How long an identical search stays fresh.
+ *
+ * The Hub's rankings do not move minute to minute, and the default query —
+ * every mlx model by downloads — is issued whenever the search view opens. A
+ * short cache makes reopening it instant instead of a second-long round trip
+ * for the same answer.
+ */
+const SEARCH_TTL_MS = 60_000
+
 export class HuggingFaceService {
   private readonly sizeCache = new Map<string, number | undefined>()
+  private readonly searchCache = new Map<string, { at: number; results: ModelSummary[] }>()
+  /**
+   * Searches currently in flight, so two callers asking the same thing at once
+   * make one request. A double-clicked button and React's development
+   * double-mount both land here.
+   */
+  private readonly inFlight = new Map<string, Promise<ModelSummary[]>>()
 
   private headers(): Record<string, string> {
     const h: Record<string, string> = { Accept: 'application/json' }
@@ -39,6 +56,30 @@ export class HuggingFaceService {
    * filters run client-side and would otherwise starve a limit-sized page.
    */
   async search(query: SearchQuery): Promise<ModelSummary[]> {
+    const key = JSON.stringify(query)
+    const cached = this.searchCache.get(key)
+    if (cached && Date.now() - cached.at < SEARCH_TTL_MS) return cached.results
+
+    const running = this.inFlight.get(key)
+    if (running) return running
+
+    const request = this.runSearch(query).then(
+      (results) => {
+        this.searchCache.set(key, { at: Date.now(), results })
+        this.inFlight.delete(key)
+        return results
+      },
+      (err) => {
+        // Never cache a failure: the next attempt should really retry.
+        this.inFlight.delete(key)
+        throw err
+      },
+    )
+    this.inFlight.set(key, request)
+    return request
+  }
+
+  private async runSearch(query: SearchQuery): Promise<ModelSummary[]> {
     const limit = query.limit ?? 30
     const fetchLimit = Math.min(1000, Math.max(limit, limit * 3))
     const url = buildSearchUrl({ ...query, limit: fetchLimit })

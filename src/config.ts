@@ -3,8 +3,8 @@ import {
   mergeSampling,
   type SamplingOverride,
   type SamplingParams,
-} from './services/sampling'
-import { settings } from './core/settings'
+} from './services/sampling.ts'
+import { settings } from './core/settings.ts'
 
 export const SECTION = 'mlxConsole'
 

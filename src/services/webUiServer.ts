@@ -352,9 +352,12 @@ const VIEWS = [
 function appShell(args: { nonce: string; token: string; label: string; view: string | null }): string {
   const { nonce, token, label } = args
   const view = VIEWS.some((v) => v.id === args.view) ? args.view : 'server'
+  // Buttons, not links: switching views must not reload the page. A reload
+  // re-downloads the bundle, drops the event stream and re-runs every view's
+  // initial load — which showed up as a fresh Hugging Face search on every
+  // click of the Search tab.
   const tabs = VIEWS.map(
-    (v) =>
-      `<a class="tab${v.id === view ? ' active' : ''}" href="?view=${v.id}${token ? '&t=' + token : ''}">${v.label}</a>`,
+    (v) => `<button class="tab${v.id === view ? ' active' : ''}" data-view="${v.id}">${v.label}</button>`,
   ).join('')
 
   return `<!doctype html>
@@ -373,10 +376,10 @@ ${STYLES}
   header h1 { font-size: 15px; margin: 0; font-weight: 600; }
   nav { display: flex; gap: 2px; padding: 8px 16px 0; overflow-x: auto;
         border-bottom: 1px solid var(--vscode-panel-border); }
-  .tab { padding: 6px 12px; border-radius: 6px 6px 0 0; white-space: nowrap;
+  .tab { padding: 6px 12px; border-radius: 6px 6px 0 0; white-space: nowrap; font: inherit;
          color: var(--vscode-descriptionForeground); border: 1px solid transparent;
-         border-bottom: none; }
-  .tab:hover { color: var(--vscode-foreground); text-decoration: none; }
+         border-bottom: none; background: none; cursor: pointer; }
+  .tab:hover { color: var(--vscode-foreground); background: none; }
   .tab.active { color: var(--vscode-foreground); background: var(--page-elevated);
                 border-color: var(--vscode-panel-border); }
   main { max-width: 1100px; margin-inline: auto; padding: 12px 8px 48px; }
@@ -433,6 +436,20 @@ window.__MLX_VIEW__ = ${JSON.stringify(view)};
   }
   connect();
 
+  // View switching, in place. Falls back to a page load only if the bundle is
+  // older than this shell and does not expose the hook.
+  document.querySelectorAll('button[data-view]').forEach(function (b) {
+    b.onclick = function () {
+      var view = b.dataset.view;
+      if (!window.__MLX_SHOW__) { location.search = '?view=' + view; return; }
+      window.__MLX_SHOW__(view);
+      document.querySelectorAll('button[data-view]').forEach(function (o) {
+        o.classList.toggle('active', o === b);
+      });
+      history.replaceState(null, '', '?view=' + view);
+    };
+  });
+
   // The single API the panel code expects from its host.
   window.acquireVsCodeApi = function () {
     var state = {};
@@ -440,7 +457,12 @@ window.__MLX_VIEW__ = ${JSON.stringify(view)};
       postMessage: function (msg) {
         if (msg && msg.type === 'openExternal') return void window.open(msg.url, '_blank', 'noopener');
         if (msg && msg.type === 'copy') return void navigator.clipboard.writeText(msg.text);
-        if (msg && msg.type === 'openSettings') return;  // no settings editor here
+        if (msg && msg.type === 'openSettings') {
+          // No settings editor in a browser — reveal the setting in the panel
+          // that is already on screen instead of doing nothing.
+          window.dispatchEvent(new CustomEvent('mlx:open-settings', { detail: msg.query || '' }));
+          return;
+        }
         send(msg);
       },
       getState: function () { return state; },

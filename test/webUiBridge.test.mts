@@ -111,7 +111,12 @@ test('the page serves the panel bundle and mounts the requested view', async () 
     assert.match(html, /__MLX_VIEW__ = "search"/, 'the app is told which view to mount')
     assert.match(html, /acquireVsCodeApi/, 'the host API is shimmed')
     assert.match(html, /src="\/app\.js/, 'the real bundle is loaded, not a copy')
-    assert.match(html, /class="tab active"[^>]*view=search/, 'the active tab reflects the view')
+    assert.match(html, /class="tab active" data-view="search"/, 'the active tab reflects the view')
+    assert.equal(
+      /<a class="tab/.test(html),
+      false,
+      'tabs must be buttons: a link reloads the page and refetches everything',
+    )
 
     const js = await fetch(`${base}/app.js`)
     assert.equal(js.headers.get('content-type'), 'text/javascript; charset=utf-8')
