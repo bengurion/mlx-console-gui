@@ -16,31 +16,35 @@ whether a 120B model will actually fit in 128 GB. This collapses that into one p
 ## Why this exists
 
 On a PC with a discrete GPU there are two memory pools: the model sits in VRAM, the OS in
-system RAM, and they do not compete. Apple Silicon has **one pool**. That is why a laptop
-can run a 60 GB model at all — but it also means the model and macOS draw from the same
-budget, and GPU memory is *wired*, so the system cannot page it out to make room.
+system RAM, and they do not compete. Apple Silicon has **one pool**. That is why a Mac can
+run models no consumer GPU could hold — but it also means the model and macOS draw from the
+same budget, and GPU memory is *wired*, so the system cannot page it out to make room.
 
 A model that is slightly too big therefore does not fail to load. It loads, takes memory
 the system needed, and everything else starts swapping.
 
-Most tooling is quiet about this. Measured while building the extension, on a 128 GB M5 Max:
+Most tooling is quiet about the things that decide whether that happens:
 
-- **The ceiling is 107.5 GB, not 128.** Metal reports it as
-  `max_recommended_working_set_size`. It is published, not a rule of thumb.
-- **~21.8 GB is already in use** with no model loaded, and swap was already in play. "Leave
-  8 GB for the system" is not a real option.
-- **KV cache is ~72 KiB per token** for gpt-oss-120b — 9.7 GB at its full 131k context, on
-  top of ~60 GB of weights. Read `num_key_value_heads`, not `num_attention_heads`; the
-  latter overestimates by 8× under grouped-query attention.
-- **`mlx_lm.server` never unloads.** One model, loaded lazily inside the first request, no
-  idle timeout, no unload endpoint, and `/v1/models` reports your cache rather than what is
-  resident.
-- **Its defaults assume a shared host.** `--decode-concurrency` is 32 parallel sequences,
-  each with its own KV cache; `--prompt-cache-bytes` is unbounded by default.
+- **Your usable ceiling is not your RAM size.** Metal publishes a
+  `max_recommended_working_set_size` — typically well under total memory. It is reported per
+  machine, so it can be read rather than approximated with a 70%-of-RAM rule of thumb.
+- **The OS has already spent some of it.** Whatever your desktop, browser and editor are
+  holding is unavailable, and it is rarely a small number.
+- **KV cache scales with context and is not in the model's file size.** Cost per token
+  follows from the attention shape — layers, KV heads, head dimension — so a long context
+  can add many gigabytes on top of the weights. Grouped-query models cache far less than
+  their attention-head count suggests, which is easy to get wrong in the expensive
+  direction.
+- **`mlx_lm.server` never unloads.** One model, loaded lazily inside the first request that
+  names it, no idle timeout, no unload endpoint, and `/v1/models` reports your download
+  cache rather than what is actually resident.
+- **Its defaults target a shared inference host,** not a laptop also running your desktop:
+  many parallel decode sequences, each with its own KV cache, and an unbounded prompt cache.
 
-The extension reads these live rather than guessing, and is explicit about the one thing it
-cannot know: macOS exposes no per-process GPU memory accounting at any privilege level, so
-"held by other apps" is inferred, not measured.
+None of these are fixed numbers, which is the point — they depend on your hardware, your
+model and what else is running. The extension reads them live rather than assuming, and is
+explicit about the one thing it cannot know: macOS exposes no per-process GPU memory
+accounting at any privilege level, so "held by other apps" is inferred, not measured.
 
 ## What it does
 
