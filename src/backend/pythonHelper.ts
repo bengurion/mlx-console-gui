@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import * as readline from 'node:readline'
 import { log } from '../core/logging'
-import { mlxProcessEnv } from '../util/env'
+import { convertedRoot, mlxProcessEnv } from '../util/env'
 import type { EnvironmentManager } from './environmentManager'
 import type { LocalModel } from '../shared/protocol'
 
@@ -61,7 +61,13 @@ export class PythonHelper {
   }
 
   async scan(): Promise<LocalModel[]> {
-    const res = await this.runJson<{ ok: boolean; models?: LocalModel[]; error?: string }>(['scan'])
+    // Converted models live outside the HF cache; the scan is told where to
+    // look so they show up alongside downloaded ones.
+    const res = await this.runJson<{ ok: boolean; models?: LocalModel[]; error?: string }>([
+      'scan',
+      '--local',
+      convertedRoot(),
+    ])
     if (!res.ok) throw new Error(res.error ?? 'scan failed')
     return res.models ?? []
   }
@@ -71,6 +77,8 @@ export class PythonHelper {
       'delete',
       '--repo',
       repo,
+      '--local',
+      convertedRoot(),
     ])
     if (!res.ok) throw new Error(res.error ?? 'delete failed')
     return { freedBytes: res.freedBytes ?? 0 }

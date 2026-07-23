@@ -30,6 +30,7 @@ import { PythonHelper } from '../backend/pythonHelper'
 import { HuggingFaceService } from '../services/huggingFaceService'
 import { CacheService } from '../services/cacheService'
 import { DownloadManager } from '../services/downloadManager'
+import { ConvertManager } from '../services/convertManager'
 import { MetricsService } from '../services/metricsService'
 import { WebviewHub } from '../ui/webview/webviewHub'
 import { HarmonyProxy } from '../services/harmonyProxy'
@@ -249,6 +250,7 @@ function buildApp(settings: SettingsStore, helper: string | undefined) {
         hf: new HuggingFaceService(),
         cache: new CacheService(python),
         downloads: new DownloadManager(python),
+        convert: new ConvertManager(env, python),
         metrics,
         packageJSON: pkg,
         extensionUri: { fsPath: dir },

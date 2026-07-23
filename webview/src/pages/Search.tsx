@@ -2,6 +2,9 @@ import { useEffect, useState, useCallback } from 'react'
 import { rpc, onPush, openExternal } from '../api'
 import { bytes, count, relativeDate } from '../format'
 import type {
+  ConvertItem,
+  ConvertPlan,
+  ConvertState,
   DownloadItem,
   DownloadState,
   FitVerdict,
@@ -36,6 +39,12 @@ const FIT_COLOR: Record<FitVerdict, string> = {
 
 type SizeInfo = { bytes: number; fit: FitVerdict }
 
+/** Colour for the finer-grained verdicts a conversion plan reports. */
+const PLAN_COLOR: Record<string, string> = {
+  ...FIT_COLOR,
+  'over-budget': 'var(--vscode-editorWarning-foreground, #d29922)',
+}
+
 export function SearchPage() {
   const [query, setQuery] = useState<SearchQuery>({
     text: '',
@@ -54,6 +63,7 @@ export function SearchPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>()
   const [dl, setDl] = useState<Record<string, DownloadState>>({})
+  const [conv, setConv] = useState<Record<string, ConvertState>>({})
 
   useEffect(
     () =>
@@ -61,6 +71,16 @@ export function SearchPage() {
         const map: Record<string, DownloadState> = {}
         for (const i of items) map[i.repo] = i.state
         setDl(map)
+      }),
+    [],
+  )
+
+  useEffect(
+    () =>
+      onPush<ConvertItem[]>('converts', (items) => {
+        const map: Record<string, ConvertState> = {}
+        for (const i of items) map[i.repo] = i.state
+        setConv(map)
       }),
     [],
   )
@@ -194,7 +214,13 @@ export function SearchPage() {
 
       <div className="col">
         {visible.map((m) => (
-          <ResultCard key={m.id} model={m} exact={sizes[m.id]} state={dl[m.id]} />
+          <ResultCard
+            key={m.id}
+            model={m}
+            exact={sizes[m.id]}
+            state={dl[m.id]}
+            convertState={conv[m.id]}
+          />
         ))}
       </div>
 
@@ -218,11 +244,18 @@ function ResultCard({
   model,
   exact,
   state,
+  convertState,
 }: {
   model: ModelSummary
   exact?: SizeInfo
   state?: DownloadState
+  convertState?: ConvertState
 }) {
+  // The quantization choice used to be an editor quick pick, which the browser
+  // dashboard could not show at all — the button simply did nothing there. It
+  // opens inside the card now, so both hosts get the same flow.
+  const [plan, setPlan] = useState<ConvertPlan>()
+  const [planError, setPlanError] = useState<string>()
   const sizeBytes = exact?.bytes ?? model.sizeBytes
   const fit: FitVerdict = exact?.fit ?? model.fit ?? 'unknown'
   const label =
@@ -291,6 +324,53 @@ function ResultCard({
         </div>
       )}
 
+      {planError && (
+        <div className="small" style={{ color: 'var(--vscode-errorForeground)' }}>
+          {planError}
+        </div>
+      )}
+
+      {plan && (
+        <div className="col" style={{ gap: 4 }}>
+          <div className="small muted">
+            {plan.paramsB
+              ? `~${plan.paramsB}B parameters · ${bytes(plan.budgetBytes)} usable of ${bytes(plan.totalBytes)}`
+              : 'The repo id does not say how big this model is — sizes below are unknown, not zero.'}
+          </div>
+          {plan.error && (
+            <div className="small" style={{ color: 'var(--vscode-editorWarning-foreground)' }}>
+              {plan.error}
+            </div>
+          )}
+          {plan.options.map((o) => (
+            <button
+              key={o.bits}
+              className="secondary"
+              title={o.detail}
+              onClick={() => {
+                setPlan(undefined)
+                void rpc<{ ok: boolean; error?: string }>('convertModel', {
+                  repo: model.id,
+                  bits: o.bits,
+                }).then((r) => !r.ok && setPlanError(r.error))
+              }}
+            >
+              <span>
+                {o.bits}-bit{o.recommended ? ' · recommended' : ''}
+              </span>
+              <span className="small" style={{ color: PLAN_COLOR[o.fit] }}>
+                {' '}
+                {o.summary}
+              </span>
+            </button>
+          ))}
+          <div className="small muted">
+            Conversion downloads the full-precision weights first — that is the slow part. Progress
+            appears under Downloads.
+          </div>
+        </div>
+      )}
+
       <div className="row wrap">
         {format === 'mlx' && (
           <button disabled={busy} onClick={() => rpc('startDownload', { repo: model.id })}>
@@ -299,10 +379,23 @@ function ResultCard({
         )}
         {format === 'convertible' && (
           <button
-            title="Convert to MLX at the highest quantization that fits this machine"
-            onClick={() => rpc('convertModel', { repo: model.id })}
+            disabled={convertState === 'converting' || convertState === 'downloading'}
+            title="Pick a quantization and convert this repo to MLX"
+            onClick={() => {
+              if (plan) return setPlan(undefined)
+              setPlanError(undefined)
+              void rpc<ConvertPlan>('getConvertPlan', { repo: model.id })
+                .then(setPlan)
+                .catch((e: Error) => setPlanError(e.message))
+            }}
           >
-            Convert to MLX…
+            {convertState === 'converting' || convertState === 'downloading'
+              ? 'Converting…'
+              : convertState === 'done'
+                ? 'Converted'
+                : plan
+                  ? 'Cancel'
+                  : 'Convert to MLX…'}
           </button>
         )}
         {format === 'unsupported' && (

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { rpc, onPush } from '../api'
-import { bytes, relativeDate } from '../format'
+import { bytes, relativeDate, shortRepo } from '../format'
 import { ModelConfig } from './ModelConfig'
 import type { EnvStatusLite, LocalModel, ServerStatusLite } from '../../../src/shared/protocol'
 
@@ -91,8 +91,12 @@ export function ModelsPage() {
           return (
             <div key={m.repo} className={`card col${active ? ' active' : ''}`}>
               <div className="row spread">
-                <strong>{m.repo}</strong>
-                {active && <span className="badge">active</span>}
+                {/* A converted model has no repo id — its path is its name. */}
+                <strong title={m.repo}>{m.local ? shortRepo(m.repo) : m.repo}</strong>
+                <span className="row">
+                  {m.local && <span className="badge">converted</span>}
+                  {active && <span className="badge">active</span>}
+                </span>
               </div>
               <div className="row wrap small muted">
                 <span>{bytes(m.sizeBytes)}</span>

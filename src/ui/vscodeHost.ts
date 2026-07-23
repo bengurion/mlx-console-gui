@@ -135,6 +135,5 @@ export function vscodeHubHost(): HubHost {
     // editable in this UI, and sending people elsewhere to change one is the
     // thing that is being removed.
     openSettings: () => void vscode.commands.executeCommand('mlxConsole.server.focus'),
-    convertModel: (repo) => void vscode.commands.executeCommand('mlxConsole.convertModel', repo),
   }
 }

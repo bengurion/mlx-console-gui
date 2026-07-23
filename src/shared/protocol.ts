@@ -58,11 +58,14 @@ export interface SearchQuery {
 }
 
 export interface LocalModel {
+  /** Repo id, or — for a converted model, which has no repo — its path. */
   repo: string
   sizeBytes: number
   nbFiles: number
   lastModified?: string
   path: string
+  /** Converted locally rather than downloaded: lives outside the HF cache. */
+  local?: boolean
 }
 
 export type DownloadState = 'queued' | 'downloading' | 'done' | 'error' | 'canceled'
@@ -260,12 +263,49 @@ export interface ExternalClientsInfo {
   snippets: { opencode: string; copilot: string; vscode: string; curl: string; gotchas: string }
 }
 
+export type ConvertState = 'downloading' | 'converting' | 'done' | 'error' | 'canceled'
+
+/** One conversion job, shaped like a download because it behaves like one. */
+export interface ConvertItem {
+  repo: string
+  bits: number
+  outPath: string
+  state: ConvertState
+  progress: number // 0..1, from mlx_lm.convert's own progress bars
+  message?: string
+}
+
+/** One quantization the user can pick, with what it costs. */
+export interface ConvertOption {
+  bits: number
+  recommended: boolean
+  /** Estimated weight bytes; absent when the repo id does not name a size. */
+  estBytes?: number
+  /** Finer-grained than FitVerdict: 'over-budget' still loads with nothing else open. */
+  fit: 'fits' | 'tight' | 'over-budget' | 'too-large' | 'unknown'
+  summary: string
+  detail: string
+}
+
+export interface ConvertPlan {
+  repo: string
+  /** Parameters in billions, parsed from the repo id. */
+  paramsB?: number
+  budgetBytes: number
+  totalBytes: number
+  options: ConvertOption[]
+  /** Set when conversion is impossible, or possible but pointless. */
+  error?: string
+}
+
 export type RpcMethod =
   | 'search'
   | 'getModelSize'
   | 'getModelSizes'
   | 'getMachine'
+  | 'getConvertPlan'
   | 'convertModel'
+  | 'cancelConvert'
   | 'listModels'
   | 'deleteModel'
   | 'startDownload'
@@ -307,6 +347,7 @@ export type WebviewBound =
   | { type: 'push'; name: 'serverStatus'; data: ServerStatusLite }
   | { type: 'push'; name: 'envStatus'; data: EnvStatusLite }
   | { type: 'push'; name: 'downloads'; data: DownloadItem[] }
+  | { type: 'push'; name: 'converts'; data: ConvertItem[] }
   | { type: 'push'; name: 'models'; data: LocalModel[] }
   | { type: 'push'; name: 'metrics'; data: MetricsSnapshot }
   | { type: 'push'; name: 'modelProfile'; data: ModelProfile }

@@ -14,6 +14,7 @@ import type { ServerManager } from '../../backend/serverManager'
 import type { HuggingFaceService } from '../../services/huggingFaceService'
 import type { CacheService } from '../../services/cacheService'
 import type { DownloadManager } from '../../services/downloadManager'
+import type { ConvertManager } from '../../services/convertManager'
 import type { MetricsService } from '../../services/metricsService'
 import { selectDraftModel, type DraftCandidate } from '../../services/modelConfig'
 import { ModelConfigReader } from '../../services/modelConfigReader'
@@ -46,6 +47,7 @@ export interface HubDeps {
   hf: HuggingFaceService
   cache: CacheService
   downloads: DownloadManager
+  convert: ConvertManager
   metrics: MetricsService
   /** The extension manifest, used to derive the settings catalog. */
   packageJSON: {
@@ -84,8 +86,6 @@ export interface HubHost {
   copy?(text: string): Promise<void>
   /** VSCode opens its settings editor; other hosts have nowhere to go. */
   openSettings?(query?: string): void
-  /** Model conversion is an interactive flow that lives in the extension. */
-  convertModel?(repo: string): void
 }
 
 /** Nothing to ask, nothing to show: used when a host supplies no UI. */
@@ -119,6 +119,10 @@ export class WebviewHub {
       deps.env.onDidChange(() => this.pushEnvStatus()),
       deps.downloads.onDidChange((items) => this.broadcast({ type: 'push', name: 'downloads', data: items })),
       deps.downloads.onDidComplete(() => void this.refreshModels()),
+      deps.convert.onDidChange((items) => this.broadcast({ type: 'push', name: 'converts', data: items })),
+      // A converted model is a new local model; the Models page should not need
+      // a manual refresh to see what the user just spent an hour making.
+      deps.convert.onDidComplete(() => void this.refreshModels()),
       deps.metrics.onDidSample((m) => this.broadcast({ type: 'push', name: 'metrics', data: m })),
       // Recompute everything model-derived whenever the resident model changes.
       deps.server.onDidChange((s) => {
@@ -541,8 +545,14 @@ export class WebviewHub {
       }
       case 'getMachine':
         return this.machine()
-      case 'convertModel':
-        this.host.convertModel?.(repoOf())
+      case 'getConvertPlan':
+        return this.deps.convert.plan(repoOf())
+      case 'convertModel': {
+        const { repo, bits } = params as { repo: string; bits?: number }
+        return this.deps.convert.start(repo, bits)
+      }
+      case 'cancelConvert':
+        this.deps.convert.cancel(repoOf())
         return { ok: true }
       case 'getModelSize':
         return this.deps.hf.getModelSize(repoOf())
@@ -671,6 +681,7 @@ export class WebviewHub {
     void webview.postMessage({ type: 'push', name: 'serverStatus', data: this.serverStatusLite() })
     void webview.postMessage({ type: 'push', name: 'envStatus', data: this.envStatusLite() })
     void webview.postMessage({ type: 'push', name: 'downloads', data: this.deps.downloads.list() })
+    void webview.postMessage({ type: 'push', name: 'converts', data: this.deps.convert.list() })
     const models = await this.safeScan()
     void webview.postMessage({ type: 'push', name: 'models', data: models })
     const current = this.deps.server.loadedModel ?? this.deps.server.activeModel

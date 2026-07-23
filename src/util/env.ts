@@ -1,4 +1,5 @@
 import * as fs from 'node:fs'
+import * as os from 'node:os'
 import * as path from 'node:path'
 import { Config } from '../config.ts'
 import { log } from '../core/logging.ts'
@@ -12,6 +13,17 @@ import { log } from '../core/logging.ts'
  * The `hub/` folder is created up front: huggingface_hub raises CacheNotFound
  * when scanning a directory that does not exist yet.
  */
+/**
+ * Where converted models are written, and the one place that decides it.
+ *
+ * Both the converter and the scan that has to find the results read this, so a
+ * conversion cannot land somewhere the Models page never looks.
+ */
+export function convertedRoot(): string {
+  const modelsDir = Config.modelsDir()
+  return modelsDir ? path.join(modelsDir, 'mlx-converted') : path.join(os.homedir(), 'mlx-models')
+}
+
 export function mlxProcessEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env }
 

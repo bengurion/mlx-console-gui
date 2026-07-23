@@ -81,7 +81,7 @@ export async function activate(context: vscode.ExtensionContext) {
   const hf = new HuggingFaceService()
   const cache = new CacheService(helper)
   const downloads = new DownloadManager(helper)
-  const convert = new ConvertManager(env, server)
+  const convert = new ConvertManager(env, helper)
   const metrics = new MetricsService(env, server)
   metrics.elevate = vscodeElevate
 
@@ -97,6 +97,7 @@ export async function activate(context: vscode.ExtensionContext) {
     hf,
     cache,
     downloads,
+    convert,
     metrics,
     packageJSON: context.extension.packageJSON,
     extensionUri: context.extensionUri,
@@ -109,6 +110,7 @@ export async function activate(context: vscode.ExtensionContext) {
     { dispose: () => env.dispose() },
     { dispose: () => server.dispose() },
     { dispose: () => downloads.dispose() },
+    { dispose: () => convert.dispose() },
     { dispose: () => hub.dispose() },
     metrics,
     env.onDidChange((s) => statusBar.setEnv(s)),
@@ -227,9 +229,20 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('mlxConsole.manageModels', () =>
       vscode.commands.executeCommand('mlxConsole.models.focus'),
     ),
-    vscode.commands.registerCommand('mlxConsole.convertModel', (repo?: unknown) =>
-      convert.convertInteractive(typeof repo === 'string' ? repo : undefined),
-    ),
+    /*
+     * Conversion is chosen and watched in the views now, not in a quick pick:
+     * the same flow has to work in the browser dashboard, where an editor modal
+     * would simply never appear. With no repo this opens the place to pick one;
+     * with a repo it starts at the recommended quantization.
+     */
+    vscode.commands.registerCommand('mlxConsole.convertModel', async (repo?: unknown) => {
+      if (typeof repo !== 'string' || !repo) {
+        return vscode.commands.executeCommand('mlxConsole.search.focus')
+      }
+      const res = await convert.start(repo)
+      if (!res.ok) return void vscode.window.showErrorMessage(`MLX: ${res.error}`)
+      void vscode.commands.executeCommand('mlxConsole.downloads.focus')
+    }),
   )
 
   // Native chat surfaces

@@ -1,10 +1,24 @@
-import * as vscode from 'vscode'
-import { spawn } from 'node:child_process'
+/**
+ * Turning a full-precision Hugging Face repo into a quantized MLX model.
+ *
+ * `mlx_lm.convert` does the work; this decides what to ask it for and reports
+ * what it is doing. Two things are worth stating:
+ *
+ *  - **No editor.** The quantization choice used to be a VSCode quick pick, so
+ *    the browser dashboard's Convert button opened a menu nobody could see —
+ *    from the browser it looked like the button did nothing. The options are
+ *    now data the UI renders, and the whole flow runs in either host.
+ *  - **Conversion is a job, not a call.** It downloads the full-precision
+ *    weights first, which for a 70B model is an hour and 140 GB. It is tracked
+ *    and cancellable like a download, and shows up in the same list.
+ */
+import { spawn, type ChildProcess } from 'node:child_process'
+import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { log } from '../core/logging'
-import { Config } from '../config'
-import { mlxProcessEnv } from '../util/env'
+import { Emitter } from '../core/events.ts'
+import { log } from '../core/logging.ts'
+import { convertedRoot, mlxProcessEnv } from '../util/env.ts'
 import {
   CONVERT_BITS,
   bytesForBits,
@@ -13,170 +27,275 @@ import {
   formatBytes,
   parseParamsB,
   isGguf,
-} from './modelFit'
-import type { EnvironmentManager } from '../backend/environmentManager'
-import type { ServerManager } from '../backend/serverManager'
+} from './modelFit.ts'
+import type { ConvertItem, ConvertPlan } from '../shared/protocol.ts'
+
+/** Only what conversion needs from the environment, so this stays testable. */
+export interface ConvertEnv {
+  ensureReady(interactive?: boolean): Promise<boolean>
+  binPath(name: string): string
+}
+
+/** Everything spawn-shaped, so tests can run without mlx-lm installed. */
+export interface ConvertRunner {
+  (bin: string, args: string[], env: NodeJS.ProcessEnv): ChildProcess
+}
 
 /**
- * Converts a Hugging Face model into MLX format via `mlx_lm.convert`, choosing
- * the highest quantization that fits this machine's memory budget.
+ * Fetching the source repo in full, before converting.
+ *
+ * Not an optimization — `mlx_lm.convert` does not work without it. It fetches
+ * only weights and configs, and then its own `save()` re-resolves the source
+ * with `snapshot_download(local_files_only=True)`, which current
+ * huggingface_hub versions refuse for an incomplete snapshot. The whole
+ * conversion runs, quantizes, and dies at the last step with
+ * `IncompleteSnapshotError: 3 file(s) are missing (.gitattributes, LICENSE,
+ * README.md)`. Downloading everything first makes the snapshot complete, and
+ * gives a real progress bar for the slow half besides.
  */
-export class ConvertManager {
-  constructor(
-    private readonly env: EnvironmentManager,
-    private readonly server: ServerManager,
-  ) {}
+export interface ConvertDownloader {
+  download(
+    repo: string,
+    onProgress: (p: { downloaded?: number; total?: number; file?: string }) => void,
+    signal?: AbortSignal,
+  ): Promise<void>
+}
 
+const defaultRunner: ConvertRunner = (bin, args, env) => spawn(bin, args, { env })
+
+export class ConvertManager {
+  private readonly items = new Map<string, ConvertItem>()
+  private readonly running = new Map<string, ChildProcess>()
+  private readonly env: ConvertEnv
+  private readonly run: ConvertRunner
+  private readonly fetcher: ConvertDownloader | undefined
+  private readonly aborts = new Map<string, AbortController>()
+
+  private readonly _onDidChange = new Emitter<ConvertItem[]>()
+  readonly onDidChange = this._onDidChange.event
+
+  /** Fired with the output path when a conversion succeeds. */
+  private readonly _onDidComplete = new Emitter<string>()
+  readonly onDidComplete = this._onDidComplete.event
+
+  constructor(env: ConvertEnv, fetcher?: ConvertDownloader, run: ConvertRunner = defaultRunner) {
+    this.env = env
+    this.fetcher = fetcher
+    this.run = run
+  }
+
+  list(): ConvertItem[] {
+    return [...this.items.values()]
+  }
+
+  /** Three quarters of unified memory: the rest is the OS, the UI and everything else. */
   private budgetBytes(): number {
     return Math.floor(os.totalmem() * 0.75)
   }
 
-  /** Default output root for converted models. */
-  private outputRoot(): string {
-    const modelsDir = Config.modelsDir()
-    return modelsDir
-      ? path.join(modelsDir, 'mlx-converted')
-      : path.join(os.homedir(), 'mlx-models')
+  /** Where converted models are written. Kept beside the cache so one setting moves both. */
+  outputRoot(): string {
+    return convertedRoot()
   }
 
-  /** Full interactive flow: pick source, pick bits, convert, offer to use it. */
-  async convertInteractive(sourceRepo?: string): Promise<void> {
-    if (!(await this.env.ensureReady(true))) return
+  outputPath(repo: string, bits: number): string {
+    return path.join(this.outputRoot(), `${repo.split('/').pop()}-${bits}bit`)
+  }
 
-    const repo =
-      sourceRepo ??
-      (await vscode.window.showInputBox({
-        title: 'Convert model to MLX',
-        prompt: 'Hugging Face repo id (full-precision source), e.g. Qwen/Qwen2.5-Coder-7B-Instruct',
-        ignoreFocusOut: true,
-        validateInput: (v) => (v.includes('/') ? undefined : 'Expected owner/name'),
-      }))
-    if (!repo) return
+  /**
+   * The choices, with the consequence of each spelled out.
+   *
+   * The parameter count comes from the repo id, which is a guess — "7B" in a
+   * name is a convention, not metadata — so sizes are marked approximate and a
+   * repo that names no size still offers every bit width rather than refusing.
+   */
+  plan(repo: string): ConvertPlan {
+    const budgetBytes = this.budgetBytes()
+    const totalBytes = os.totalmem()
 
     if (isGguf(repo)) {
-      void vscode.window.showErrorMessage(
-        'MLX: GGUF repos cannot be converted — mlx_lm.convert only accepts Hugging Face format models.',
-      )
-      return
+      return {
+        repo,
+        budgetBytes,
+        totalBytes,
+        options: [],
+        error: 'GGUF repos cannot be converted — mlx_lm.convert only reads Hugging Face safetensors.',
+      }
     }
 
-    const budget = this.budgetBytes()
     const paramsB = parseParamsB(repo)
-    const recommended = chooseQuantBits(paramsB, budget)
-
-    const totalRam = os.totalmem()
-
-    const picks = CONVERT_BITS.map((bits) => {
-      const est = paramsB ? bytesForBits(paramsB, bits) : undefined
-      const fit = est ? explainFit(est, budget, totalRam) : undefined
+    const recommended = chooseQuantBits(paramsB, budgetBytes)
+    const options = CONVERT_BITS.map((bits) => {
+      const estBytes = paramsB ? bytesForBits(paramsB, bits) : undefined
+      const fit = estBytes ? explainFit(estBytes, budgetBytes, totalBytes) : undefined
       return {
-        label: `${bits}-bit${bits === recommended ? '  (recommended)' : ''}`,
-        description: fit ? `≈ ${formatBytes(est!)}  — ${fit.summary}` : undefined,
+        bits,
+        recommended: bits === recommended,
+        estBytes,
+        fit: fit?.verdict ?? ('unknown' as const),
+        summary: fit ? `≈ ${formatBytes(estBytes!)} — ${fit.summary}` : 'size unknown',
         detail:
           bits === recommended
-            ? `Highest quantization that fits ${formatBytes(budget)} of usable memory`
-            : fit?.detail,
-        bits,
+            ? `Highest quantization that fits ${formatBytes(budgetBytes)} of usable memory.`
+            : (fit?.detail ?? 'The repo id does not say how many parameters this model has.'),
       }
     })
-    if (recommended === undefined && paramsB) {
-      // Even the smallest quantization is past the budget — say whether that means
-      // "impossible" or merely "only with everything else closed".
-      const smallest = explainFit(bytesForBits(paramsB, CONVERT_BITS.at(-1)!), budget, totalRam)
-      void vscode.window.showWarningMessage(
-        `MLX: ${repo} (~${paramsB}B params) does not fit ${formatBytes(budget)} of usable memory even at ` +
-          `${CONVERT_BITS.at(-1)}-bit. ${smallest.detail}`,
-      )
-    }
 
-    const chosen = await vscode.window.showQuickPick(picks, {
-      title: `Quantization for ${repo}`,
-      placeHolder: paramsB
-        ? `~${paramsB}B parameters · ${formatBytes(budget)} usable of ${formatBytes(totalRam)} unified memory`
-        : 'Parameter count unknown — pick a bit width',
-    })
-    if (!chosen) return
-
-    const outPath = path.join(this.outputRoot(), `${repo.split('/').pop()}-${chosen.bits}bit`)
-    await this.run(repo, outPath, chosen.bits)
-  }
-
-  private async run(repo: string, outPath: string, bits: number): Promise<void> {
-    const bin = this.env.binPath('mlx_lm.convert')
-    const args = [
-      '--hf-path',
+    // Even 2-bit past the budget: say so once, here, rather than letting every
+    // option read as merely "tight".
+    const hopeless = paramsB !== undefined && recommended === undefined
+    return {
       repo,
-      '--mlx-path',
-      outPath,
-      '-q',
-      '--q-bits',
-      String(bits),
-      '--q-group-size',
-      '64',
-    ]
-    log.info(`Converting: ${bin} ${args.join(' ')}`)
-
-    await vscode.window.withProgress(
-      {
-        location: vscode.ProgressLocation.Notification,
-        title: `MLX: converting ${repo} → ${bits}-bit`,
-        cancellable: true,
-      },
-      (progress, token) =>
-        new Promise<void>((resolve) => {
-          const child = spawn(bin, args, { env: mlxProcessEnv() })
-          token.onCancellationRequested(() => child.kill('SIGTERM'))
-
-          const onData = (d: Buffer) => {
-            const text = d.toString().trimEnd()
-            if (!text) return
-            log.info(`[convert] ${text}`)
-            progress.report({ message: text.split('\n').pop()?.slice(0, 80) })
-          }
-          child.stdout?.on('data', onData)
-          child.stderr?.on('data', onData)
-
-          child.on('error', (err) => {
-            log.error('convert failed to start', err)
-            void vscode.window.showErrorMessage(`MLX convert failed: ${String(err)}`)
-            resolve()
-          })
-
-          child.on('close', (code) => {
-            if (token.isCancellationRequested) {
-              void vscode.window.showWarningMessage('MLX: conversion canceled.')
-              return resolve()
-            }
-            if (code === 0) {
-              void this.onConverted(outPath)
-            } else {
-              void vscode.window.showErrorMessage(
-                `MLX: conversion exited with code ${code}. See MLX Console logs.`,
-              )
-              log.show()
-            }
-            resolve()
-          })
-        }),
-    )
+      paramsB,
+      budgetBytes,
+      totalBytes,
+      options,
+      error: hopeless
+        ? `~${paramsB}B parameters does not fit ${formatBytes(budgetBytes)} of usable memory even at ` +
+          `${CONVERT_BITS.at(-1)}-bit. Converting will succeed; loading it will not.`
+        : undefined,
+    }
   }
 
-  private async onConverted(outPath: string) {
-    log.info(`Converted model saved to ${outPath}`)
-    const pick = await vscode.window.showInformationMessage(
-      `MLX: converted model saved to ${outPath}`,
-      'Set as default',
-      'Launch',
-      'Reveal',
-    )
-    if (pick === 'Set as default') {
-      await vscode.workspace
-        .getConfiguration('mlxConsole')
-        .update('defaultModel', outPath, vscode.ConfigurationTarget.Global)
-    } else if (pick === 'Launch') {
-      await this.server.warmUp(outPath)
-    } else if (pick === 'Reveal') {
-      await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(outPath))
+  private update(repo: string, patch: Partial<ConvertItem>) {
+    const prev: ConvertItem = this.items.get(repo) ?? {
+      repo,
+      bits: 0,
+      outPath: '',
+      state: 'converting',
+      progress: 0,
     }
+    this.items.set(repo, { ...prev, ...patch })
+    this._onDidChange.fire(this.list())
+  }
+
+  async start(repo: string, bits?: number): Promise<{ ok: boolean; error?: string }> {
+    if (this.running.has(repo) || this.aborts.has(repo)) return { ok: false, error: 'Already converting.' }
+
+    const plan = this.plan(repo)
+    if (plan.options.length === 0) return { ok: false, error: plan.error ?? 'Cannot convert this repo.' }
+
+    const chosen = bits ?? plan.options.find((o) => o.recommended)?.bits ?? 4
+    const outPath = this.outputPath(repo, chosen)
+
+    if (fs.existsSync(outPath)) {
+      return { ok: false, error: `${outPath} already exists. Delete it first, or pick another bit width.` }
+    }
+    // Failing here is much cheaper than failing after an hour of downloading.
+    if (!(await this.env.ensureReady(true))) {
+      return { ok: false, error: 'The Python environment is not ready — set it up from Settings first.' }
+    }
+
+    this.update(repo, {
+      bits: chosen,
+      outPath,
+      state: this.fetcher ? 'downloading' : 'converting',
+      progress: 0,
+      message: 'Starting.',
+    })
+
+    // Phase one: the full source snapshot. See ConvertDownloader — without a
+    // complete one the conversion runs to the end and then throws away its
+    // work.
+    if (this.fetcher) {
+      const abort = new AbortController()
+      this.aborts.set(repo, abort)
+      try {
+        await this.fetcher.download(
+          repo,
+          (p) =>
+            this.update(repo, {
+              // The final 'done' event carries a total but no running count;
+              // taking it as 0 would snap a finished bar back to empty.
+              ...(p.downloaded != null && p.total
+                ? { progress: Math.min(1, p.downloaded / p.total) }
+                : {}),
+              message: `Downloading ${repo}${p.file ? ` — ${p.file}` : ''}`,
+            }),
+          abort.signal,
+        )
+      } catch (err) {
+        this.aborts.delete(repo)
+        if (abort.signal.aborted) {
+          this.update(repo, { state: 'canceled', message: 'Canceled before conversion started.' })
+          return { ok: true }
+        }
+        const message = `Could not download ${repo}: ${err instanceof Error ? err.message : String(err)}`
+        this.update(repo, { state: 'error', message })
+        return { ok: false, error: message }
+      }
+      this.aborts.delete(repo)
+    }
+
+    const bin = this.env.binPath('mlx_lm.convert')
+    const args = ['--hf-path', repo, '--mlx-path', outPath, '-q', '--q-bits', String(chosen), '--q-group-size', '64']
+    log.info(`Converting: ${bin} ${args.join(' ')}`)
+    this.update(repo, { state: 'converting', progress: 0, message: 'Quantizing.' })
+
+    const child = this.run(bin, args, mlxProcessEnv())
+    this.running.set(repo, child)
+
+    const onData = (d: Buffer) => {
+      const text = d.toString().trimEnd()
+      if (!text) return
+      log.info(`[convert ${repo}] ${text}`)
+      // tqdm redraws one line with \r; the last fragment is the current state.
+      const line = text.split(/[\r\n]/).filter(Boolean).pop() ?? ''
+      const pct = /(\d{1,3})%\|/.exec(line)
+      this.update(repo, {
+        message: line.slice(0, 120),
+        ...(pct ? { progress: Math.min(1, Number(pct[1]) / 100) } : {}),
+      })
+    }
+    child.stdout?.on('data', onData)
+    child.stderr?.on('data', onData)
+
+    child.on('error', (err) => {
+      this.running.delete(repo)
+      this.update(repo, { state: 'error', message: `Could not start mlx_lm.convert: ${String(err)}` })
+      log.error('convert failed to start', err)
+    })
+
+    child.on('close', (code, signal) => {
+      const canceled = this.running.get(repo) === undefined || signal === 'SIGTERM'
+      this.running.delete(repo)
+      if (canceled) {
+        // A half-written model directory is worse than none: mlx-lm would find
+        // it, try to load it, and fail on a missing shard.
+        fs.rmSync(outPath, { recursive: true, force: true })
+        return this.update(repo, { state: 'canceled', message: 'Canceled; the partial output was removed.' })
+      }
+      if (code === 0) {
+        this.update(repo, { state: 'done', progress: 1, message: `Saved to ${outPath}` })
+        this._onDidComplete.fire(outPath)
+        log.info(`Converted model saved to ${outPath}`)
+      } else {
+        const item = this.items.get(repo)
+        this.update(repo, {
+          state: 'error',
+          message: `mlx_lm.convert exited with code ${code}. ${item?.message ?? ''}`.trim(),
+        })
+      }
+    })
+
+    return { ok: true }
+  }
+
+  cancel(repo: string): void {
+    // Either phase may be the one running.
+    this.aborts.get(repo)?.abort()
+    const child = this.running.get(repo)
+    if (!child) return
+    this.running.delete(repo) // marks it canceled for the close handler
+    child.kill('SIGTERM')
+  }
+
+  dispose() {
+    for (const abort of this.aborts.values()) abort.abort()
+    this.aborts.clear()
+    for (const child of this.running.values()) child.kill('SIGTERM')
+    this.running.clear()
+    this._onDidChange.dispose()
+    this._onDidComplete.dispose()
   }
 }
