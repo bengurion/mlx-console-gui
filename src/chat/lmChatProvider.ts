@@ -27,6 +27,10 @@ import type { MetricsService } from '../services/metricsService'
 export function registerLmChatProvider(
   server: ServerManager,
   metrics?: MetricsService,
+  /** Every locally available model, so the picker is not limited to what a
+   * running server happens to report. Embedded mode scans the cache; remote
+   * mode asks the daemon. */
+  localModels?: () => Promise<string[]>,
 ): vscode.Disposable | undefined {
   const lm = vscode.lm as unknown as {
     registerLanguageModelChatProvider?: (vendor: string, provider: object) => vscode.Disposable
@@ -38,7 +42,10 @@ export function registerLmChatProvider(
     return undefined
   }
   try {
-    const disposable = lm.registerLanguageModelChatProvider('mlx', new MlxLmChatProvider(server, metrics))
+    const disposable = lm.registerLanguageModelChatProvider(
+      'mlx',
+      new MlxLmChatProvider(server, metrics, localModels),
+    )
     log.info('Registered MLX language model chat provider')
     return disposable
   } catch (err) {
@@ -56,6 +63,7 @@ class MlxLmChatProvider {
   constructor(
     private readonly server: ServerManager,
     private readonly metrics?: MetricsService,
+    private readonly localModels?: () => Promise<string[]>,
   ) {}
 
   /** Latest GPU ceiling / in-use figures, when the metrics service is available. */
@@ -140,6 +148,13 @@ class MlxLmChatProvider {
       }
     } catch (err) {
       log.warn('listModels for provider info failed', err)
+    }
+    // The download cache, not just what a running server reports — otherwise
+    // a stopped server empties the picker of models that are sitting on disk.
+    try {
+      for (const id of (await this.localModels?.()) ?? []) ids.add(id)
+    } catch (err) {
+      log.warn('local model scan for provider info failed', err)
     }
     const mem = await this.memory()
     return [...ids].map((id) => this.toInfo(id, this.headroomFor(id, mem)))

@@ -205,7 +205,7 @@ npm run vsce:package    # README sync + production esbuild + vsce package
 Then install the packaged extension and reload the window:
 
 ```bash
-code --install-extension mlx-console-gui-0.0.18.vsix --force
+code --install-extension mlx-console-gui-0.0.19.vsix --force
 ```
 
 Open the **MLX Console** icon in the activity bar afterwards.
@@ -231,7 +231,7 @@ the app bundle:
 
 ```bash
 "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" \
-  --install-extension mlx-console-gui-0.0.18.vsix --force
+  --install-extension mlx-console-gui-0.0.19.vsix --force
 ```
 
 </details>

@@ -268,7 +268,9 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // Native chat surfaces
   registerParticipant(context)
-  const providerDisposable = registerLmChatProvider(server, metrics)
+  const providerDisposable = registerLmChatProvider(server, metrics, async () =>
+    env.status.ready ? (await cache.list()).map((m) => m.repo) : [],
+  )
   if (providerDisposable) context.subscriptions.push(providerDisposable)
   registerTools(context, server)
 
@@ -425,9 +427,19 @@ async function activateRemote(context: vscode.ExtensionContext): Promise<void> {
     }),
   )
 
-  // Chat works off the shared server state the daemon maintains.
+  // Chat works off the shared server state the daemon maintains. The model
+  // list for the picker comes from the daemon, which owns the cache.
   registerParticipant(context)
-  const providerDisposable = registerLmChatProvider(server, metrics)
+  const providerDisposable = registerLmChatProvider(server, metrics, async () => {
+    const ep = await discover(configuredUrl())
+    if (!ep) return []
+    const res = await fetch(`${ep.origin}/api/state`, {
+      headers: ep.token ? { 'x-mlx-token': ep.token } : {},
+    }).catch(() => undefined)
+    if (!res?.ok) return []
+    const body = (await res.json()) as { state?: { models?: { repo?: string }[] } }
+    return (body.state?.models ?? []).map((m) => m.repo).filter((r): r is string => Boolean(r))
+  })
   if (providerDisposable) context.subscriptions.push(providerDisposable)
   registerTools(context, server)
 
