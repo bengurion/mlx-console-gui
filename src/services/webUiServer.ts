@@ -9,7 +9,7 @@ import {
   routeOf,
 } from './webUi.ts'
 import type { SettingSpec } from '../shared/protocol'
-import { BROWSER_THEME, STYLES } from '../ui/webview/styles.ts'
+import { BROWSER_THEME, BROWSER_UI, STYLES, THEME_INIT_JS } from '../ui/webview/styles.ts'
 
 /** Refuse absurd bodies rather than buffering whatever arrives. */
 const MAX_BODY_BYTES = 64 * 1024
@@ -351,6 +351,28 @@ const VIEWS = [
  * mounts one view from `window.__MLX_VIEW__`, and a link per tab keeps this
  * shell honest instead of duplicating routing the panel does not have.
  */
+/** Lucide-style icons for the rail, inlined so the page stays self-contained. */
+const NAV_ICONS: Record<string, string> = {
+  dashboard:
+    '<rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/>',
+  models:
+    '<path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>',
+  search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+  downloads:
+    '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>',
+  settings:
+    '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
+  clients:
+    '<path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/>',
+}
+
+function navIcon(id: string): string {
+  return (
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ` +
+    `stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${NAV_ICONS[id] ?? ''}</svg>`
+  )
+}
+
 function appShell(args: { nonce: string; token: string; label: string; view: string | null }): string {
   const { nonce, token, label } = args
   const view = VIEWS.some((v) => v.id === args.view) ? args.view : 'dashboard'
@@ -358,9 +380,13 @@ function appShell(args: { nonce: string; token: string; label: string; view: str
   // re-downloads the bundle, drops the event stream and re-runs every view's
   // initial load — which showed up as a fresh Hugging Face search on every
   // click of the Search tab.
-  const tabs = VIEWS.map(
-    (v) => `<button class="tab${v.id === view ? ' active' : ''}" data-view="${v.id}">${v.label}</button>`,
+  const items = VIEWS.map(
+    (v) =>
+      `<button class="nav-item${v.id === view ? ' active' : ''}" data-view="${v.id}" title="${v.label}">` +
+      `<span class="nav-icon">${navIcon(v.id)}</span><span class="nav-label">${v.label}</span></button>`,
   ).join('')
+  const titles = JSON.stringify(Object.fromEntries(VIEWS.map((v) => [v.id, v.label])))
+  const activeLabel = VIEWS.find((v) => v.id === view)?.label ?? 'Dashboard'
 
   return `<!doctype html>
 <html lang="en">
@@ -369,38 +395,105 @@ function appShell(args: { nonce: string; token: string; label: string; view: str
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <title>MLX Console</title>
+<script nonce="${nonce}">${THEME_INIT_JS}</script>
 <style nonce="${nonce}">
 ${BROWSER_THEME}
 ${STYLES}
-  body { background: var(--page-background); padding: 0; }
-  header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
-           padding: 12px 16px 0; }
-  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
-  nav { display: flex; gap: 2px; padding: 8px 16px 0; overflow-x: auto;
-        border-bottom: 1px solid var(--vscode-panel-border); }
-  .tab { padding: 6px 12px; border-radius: 6px 6px 0 0; white-space: nowrap; font: inherit;
-         color: var(--vscode-descriptionForeground); border: 1px solid transparent;
-         border-bottom: none; background: none; cursor: pointer; }
-  .tab:hover { color: var(--vscode-foreground); background: none; }
-  .tab.active { color: var(--vscode-foreground); background: var(--page-elevated);
-                border-color: var(--vscode-panel-border); }
-  main { max-width: 1100px; margin-inline: auto; padding: 12px 8px 48px; }
-  #offline { display: none; padding: 6px 16px; background: var(--vscode-editorWarning-foreground);
-             color: #000; font-size: 12px; }
+${BROWSER_UI}
+  html, body { height: 100%; }
+  body { padding: 0; }
+  .shell { display: flex; height: 100vh; overflow: hidden; }
+
+  /* -- the rail ------------------------------------------------------ */
+  #rail { width: 240px; flex-shrink: 0; display: flex; flex-direction: column;
+          background: var(--sidebar); color: var(--sidebar-fg); padding: 12px;
+          border-right: 1px solid rgba(255,255,255,0.1);
+          box-shadow: 0 25px 50px -12px rgba(2,6,23,0.25);
+          overflow-y: auto; transition: width 0.2s; }
+  .shell.collapsed #rail { width: 64px; }
+  .brand { display: flex; align-items: center; gap: 8px; padding: 4px; margin-bottom: 24px; color: #fff; }
+  .brand-mark { display: grid; place-items: center; width: 28px; height: 28px; flex-shrink: 0;
+                border-radius: 8px; background: rgba(255,255,255,0.15); font-size: 10px; font-weight: 700;
+                box-shadow: inset 0 1px 2px rgba(255,255,255,0.1), 0 0 0 1px rgba(255,255,255,0.15); }
+  .brand-name { flex: 1; font-weight: 700; white-space: nowrap; }
+  .shell.collapsed .brand { justify-content: center; }
+  .shell.collapsed .brand-name, .shell.collapsed .brand-mark { display: none; }
+  .rail-btn { width: 28px; height: 28px; padding: 0; flex-shrink: 0; display: grid; place-items: center;
+              background: none; border: none; box-shadow: none; border-radius: 8px;
+              color: var(--sidebar-fg); font-weight: 400; font-size: 14px; }
+  .rail-btn:hover { background: rgba(255,255,255,0.1); color: #fff; filter: none; }
+  #rail nav { flex: 1; display: flex; flex-direction: column; gap: 4px; padding: 0; border: none; }
+  button.nav-item { display: flex; align-items: center; justify-content: flex-start; gap: 12px; width: 100%;
+                    border-radius: 8px; padding: 8px 12px; font-size: 13px; font-weight: 400;
+                    background: none; border: none; box-shadow: none; color: var(--sidebar-fg);
+                    transition: background 0.15s, color 0.15s; }
+  button.nav-item:hover { background: rgba(255,255,255,0.1); color: #fff; filter: none; }
+  button.nav-item.active { background: rgba(255,255,255,0.15); color: #fff; font-weight: 600;
+                           box-shadow: inset 0 2px 4px rgba(2,6,23,0.35), 0 0 0 1px rgba(255,255,255,0.1); }
+  button.nav-item:focus-visible, .rail-btn:focus-visible {
+    outline: 2px solid rgba(255,255,255,0.85); outline-offset: 2px; box-shadow: none; }
+  .nav-icon { display: grid; place-items: center; width: 18px; height: 18px; flex-shrink: 0; }
+  .nav-icon svg { width: 18px; height: 18px; }
+  .nav-label { white-space: nowrap; }
+  .shell.collapsed .nav-label { display: none; }
+  .shell.collapsed button.nav-item { justify-content: center; padding: 8px; }
+  .rail-foot { border-top: 1px solid rgba(255,255,255,0.1); padding-top: 12px; margin-top: 12px;
+               font-size: 11px; color: rgba(255,255,255,0.55);
+               white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .shell.collapsed .rail-foot { display: none; }
+
+  /* -- the working column -------------------------------------------- */
+  .content { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+  .content > header { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+           flex-shrink: 0; padding: 10px 24px; border-bottom: 1px solid var(--border);
+           background: color-mix(in srgb, var(--surface) 80%, transparent);
+           backdrop-filter: blur(8px); box-shadow: 0 1px 2px rgba(15,23,42,0.04); }
+  .content > header h1 { margin: 0; font-size: 19px; font-weight: 600; color: var(--fg);
+              white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .header-actions { display: flex; align-items: center; gap: 12px; }
+  .header-note { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .icon-btn { width: 34px; height: 34px; padding: 0; border-radius: 10px; }
+  .icon-btn svg { width: 16px; height: 16px; }
+  #theme .moon { display: none; }
+  .dark #theme .sun { display: none; }
+  .dark #theme .moon { display: block; }
+  /* Fill the width like the app-base shell does — no artificial column cap;
+     the cards' own grid decides how many tracks a big screen gets. */
+  main { flex: 1; min-height: 0; overflow-y: auto; padding: 20px 24px 48px; }
+  #offline { display: none; padding: 6px 24px; background: var(--warning); color: #111; font-size: 12px; }
   #offline.on { display: block; }
 </style>
 </head>
 <body>
-<header>
-  <h1>MLX Console</h1>
-  <span class="muted small">served by ${label} · 127.0.0.1 · local only</span>
-</header>
-<nav>${tabs}</nav>
-<div id="offline">Disconnected — ${label} may have closed. Reconnecting…</div>
-<main><div id="root"></div></main>
+<div class="shell" id="shell">
+  <aside id="rail">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">MLX</span>
+      <span class="brand-name">MLX Console</span>
+      <button id="collapse" class="rail-btn" title="Collapse menu" aria-label="Collapse menu">«</button>
+    </div>
+    <nav aria-label="Main navigation">${items}</nav>
+    <div class="rail-foot">served by ${label} · local only</div>
+  </aside>
+  <div class="content">
+    <header>
+      <h1 id="title">${activeLabel}</h1>
+      <div class="header-actions">
+        <span class="header-note">127.0.0.1</span>
+        <button id="theme" class="secondary icon-btn" title="Toggle theme" aria-label="Toggle theme">
+          <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+          <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+        </button>
+      </div>
+    </header>
+    <div id="offline">Disconnected — ${label} may have closed. Reconnecting…</div>
+    <main><div id="root"></div></main>
+  </div>
+</div>
 
 <script nonce="${nonce}">
 window.__MLX_VIEW__ = ${JSON.stringify(view)};
+var __MLX_TITLES__ = ${titles};
 (function () {
   var TOKEN = ${JSON.stringify(token)};
   var qs = function (extra) { return TOKEN ? '?t=' + encodeURIComponent(TOKEN) + (extra || '') : (extra ? '?' + extra.slice(1) : ''); };
@@ -448,9 +541,36 @@ window.__MLX_VIEW__ = ${JSON.stringify(view)};
       document.querySelectorAll('button[data-view]').forEach(function (o) {
         o.classList.toggle('active', o === b);
       });
+      var title = document.getElementById('title');
+      if (title && __MLX_TITLES__[view]) title.textContent = __MLX_TITLES__[view];
       history.replaceState(null, '', '?view=' + view);
     };
   });
+
+  // Theme toggle: flip the .dark class and remember the choice.
+  var themeBtn = document.getElementById('theme');
+  if (themeBtn) themeBtn.onclick = function () {
+    var dark = document.documentElement.classList.toggle('dark');
+    try { localStorage.setItem('mlx-theme', dark ? 'dark' : 'light'); } catch (e) {}
+  };
+
+  // Rail collapse, persisted like the design does.
+  var shell = document.getElementById('shell');
+  var collapseBtn = document.getElementById('collapse');
+  function syncCollapse() {
+    var c = shell.classList.contains('collapsed');
+    if (collapseBtn) {
+      collapseBtn.textContent = c ? '\\u00bb' : '\\u00ab';
+      collapseBtn.title = c ? 'Expand menu' : 'Collapse menu';
+    }
+  }
+  try { if (localStorage.getItem('mlx-nav:collapsed') === '1') shell.classList.add('collapsed'); } catch (e) {}
+  syncCollapse();
+  if (collapseBtn) collapseBtn.onclick = function () {
+    var c = shell.classList.toggle('collapsed');
+    try { localStorage.setItem('mlx-nav:collapsed', c ? '1' : '0'); } catch (e) {}
+    syncCollapse();
+  };
 
   // The single API the panel code expects from its host.
   window.acquireVsCodeApi = function () {
@@ -468,6 +588,8 @@ window.__MLX_VIEW__ = ${JSON.stringify(view)};
             document.querySelectorAll('button[data-view]').forEach(function (o) {
               o.classList.toggle('active', o.dataset.view === 'settings');
             });
+            var title = document.getElementById('title');
+            if (title && __MLX_TITLES__.settings) title.textContent = __MLX_TITLES__.settings;
             history.replaceState(null, '', '?view=settings');
           }
           send(msg);

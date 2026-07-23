@@ -93,83 +93,218 @@ export const STYLES = /* css */ `
 `
 
 /**
- * VSCode's theme variables, approximated for a browser.
+ * The desktop/browser theme: semantic design tokens, worn by VSCode variables.
  *
- * Values follow Dark+ and Light+ so the dashboard looks like the panel it
- * mirrors rather than like a different application. Dark is chosen by the
- * system preference; nothing here needs JavaScript.
+ * The React app is written against VSCode's theme variables and must stay
+ * that way — inside the editor it inherits whatever theme you use. Outside
+ * the editor we want the app-base design instead (indigo accent, deep-navy
+ * rail, soft cards, light/dark via a \`.dark\` class on <html>), so the
+ * semantic tokens are defined first and every \`--vscode-*\` variable the app
+ * asks for is mapped onto them. One stylesheet, two skins, no fork.
+ *
+ * Dark mode is a class rather than a media query because the shell offers a
+ * toggle; \`THEME_INIT_JS\` applies the persisted (or system) choice before
+ * first paint.
  */
 export const BROWSER_THEME = /* css */ `
   :root {
+    /* -- semantic tokens (light) ------------------------------------- */
+    --bg: #f7f8fc;
+    --surface: #ffffff;
+    --surface-2: #eef2ff;
+    --fg: #111827;
+    --muted: #6b7280;
+    --border: #e6e8ef;
+    --hover: #f3f6fb;
+    --accent: #4f46e5;
+    --accent-fg: #ffffff;
+    --chip: #eef2ff;
+    --chip-fg: #4338ca;
+    --success: #15803d;
+    --error: #b91c1c;
+    --warning: #b45309;
+    /* Deep navy left rail, the same in both themes. */
+    --sidebar: #101f4f;
+    --sidebar-fg: #c7d2fe;
+
+    /* -- fonts -------------------------------------------------------- */
     --vscode-font-family: ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
     --vscode-font-size: 13px;
     --vscode-editor-font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 
-    --vscode-foreground: #3b3b3b;
-    --vscode-descriptionForeground: #61616c;
-    --vscode-errorForeground: #e51400;
-    --vscode-textLink-foreground: #005fb8;
-    --vscode-focusBorder: #005fb8;
-    --vscode-panel-border: rgba(0, 0, 0, 0.12);
-    --vscode-editorWidget-border: rgba(0, 0, 0, 0.12);
-    --vscode-editorWidget-background: #f8f8f8;
-    --vscode-textCodeBlock-background: rgba(0, 0, 0, 0.05);
+    /* -- what the panel app asks for, answered by the tokens ---------- */
+    --vscode-foreground: var(--fg);
+    --vscode-descriptionForeground: var(--muted);
+    --vscode-errorForeground: var(--error);
+    --vscode-textLink-foreground: var(--accent);
+    --vscode-focusBorder: var(--accent);
+    --vscode-panel-border: var(--border);
+    --vscode-editorWidget-border: var(--border);
+    --vscode-editorWidget-background: var(--surface-2);
+    --vscode-textCodeBlock-background: color-mix(in srgb, var(--fg) 6%, transparent);
 
-    --vscode-input-foreground: #3b3b3b;
-    --vscode-input-background: #ffffff;
-    --vscode-input-border: rgba(0, 0, 0, 0.16);
+    --vscode-input-foreground: var(--fg);
+    --vscode-input-background: var(--surface);
+    --vscode-input-border: var(--border);
 
-    --vscode-button-foreground: #ffffff;
-    --vscode-button-background: #005fb8;
-    --vscode-button-hoverBackground: #0258a8;
-    --vscode-button-secondaryForeground: #3b3b3b;
-    --vscode-button-secondaryBackground: #e5e5e5;
-    --vscode-button-secondaryHoverBackground: #cccccc;
+    --vscode-button-foreground: var(--accent-fg);
+    --vscode-button-background: var(--accent);
+    --vscode-button-hoverBackground: color-mix(in srgb, var(--accent) 88%, #ffffff);
+    --vscode-button-secondaryForeground: var(--fg);
+    --vscode-button-secondaryBackground: var(--surface);
+    --vscode-button-secondaryHoverBackground: var(--hover);
 
-    --vscode-badge-background: #cccccc;
-    --vscode-badge-foreground: #3b3b3b;
-    --vscode-progressBar-background: #005fb8;
-    --vscode-charts-blue: #1a85ff;
-    --vscode-editorWarning-foreground: #bf8803;
-    --vscode-testing-iconPassed: #1a7f37;
+    --vscode-badge-background: var(--chip);
+    --vscode-badge-foreground: var(--chip-fg);
+    --vscode-progressBar-background: var(--accent);
+    --vscode-charts-blue: var(--accent);
+    --vscode-editorWarning-foreground: var(--warning);
+    --vscode-testing-iconPassed: var(--success);
 
     /* Not a VSCode variable: the page chrome around the panel content. */
-    --page-background: #ffffff;
-    --page-elevated: #f3f3f3;
+    --page-background: var(--bg);
+    --page-elevated: var(--surface);
   }
 
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --vscode-foreground: #cccccc;
-      --vscode-descriptionForeground: #9d9d9d;
-      --vscode-errorForeground: #f85149;
-      --vscode-textLink-foreground: #4daafc;
-      --vscode-focusBorder: #0078d4;
-      --vscode-panel-border: rgba(255, 255, 255, 0.14);
-      --vscode-editorWidget-border: rgba(255, 255, 255, 0.14);
-      --vscode-editorWidget-background: #252526;
-      --vscode-textCodeBlock-background: rgba(255, 255, 255, 0.06);
+  :root.dark {
+    --bg: #070b14;
+    --surface: #0f172a;
+    --surface-2: #111c34;
+    --fg: #edf2f7;
+    --muted: #9aa8bd;
+    --border: #22304a;
+    --hover: #17233a;
+    --accent: #818cf8;
+    --accent-fg: #ffffff;
+    --chip: #1e2a44;
+    --chip-fg: #c7d2fe;
+    --success: #4ade80;
+    --error: #f87171;
+    --warning: #fbbf24;
+    --sidebar: #070d1f;
+    --sidebar-fg: #a8b5d8;
+  }
 
-      --vscode-input-foreground: #cccccc;
-      --vscode-input-background: #313131;
-      --vscode-input-border: rgba(255, 255, 255, 0.18);
+  ::selection { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 
-      --vscode-button-foreground: #ffffff;
-      --vscode-button-background: #0078d4;
-      --vscode-button-hoverBackground: #026ec1;
-      --vscode-button-secondaryForeground: #cccccc;
-      --vscode-button-secondaryBackground: #313131;
-      --vscode-button-secondaryHoverBackground: #3c3c3c;
-
-      --vscode-badge-background: #616161;
-      --vscode-badge-foreground: #f8f8f8;
-      --vscode-progressBar-background: #0078d4;
-      --vscode-charts-blue: #3794ff;
-      --vscode-editorWarning-foreground: #cca700;
-      --vscode-testing-iconPassed: #3fb950;
-
-      --page-background: #1f1f1f;
-      --page-elevated: #181818;
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
     }
   }
+`
+
+/**
+ * Applies the persisted theme (or the system preference) before first paint,
+ * so a dark-mode user never sees a white flash. Inline this in <head>.
+ */
+export const THEME_INIT_JS = /* js */ `
+  (function () {
+    var stored = null;
+    try { stored = localStorage.getItem('mlx-theme'); } catch (e) {}
+    var dark = stored ? stored === 'dark'
+      : window.matchMedia('(prefers-color-scheme: dark)').matches;
+    document.documentElement.classList.toggle('dark', dark);
+  })();
+`
+
+/**
+ * The design's component skin, layered over STYLES for non-VSCode hosts only.
+ *
+ * The panel CSS above stays editor-shaped (small radii, theme-variable
+ * colors) because it also renders inside VS Code webviews. These overrides
+ * restyle the same class names — rounded-xl controls, soft-shadowed cards,
+ * pill chips — and ship only in the pages the daemon serves, so the editor
+ * panels keep their native look.
+ */
+export const BROWSER_UI = /* css */ `
+  body {
+    background:
+      radial-gradient(circle at top left, color-mix(in srgb, var(--accent) 10%, transparent), transparent 32rem),
+      var(--bg);
+    color: var(--fg);
+  }
+
+  button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border-radius: 12px;
+    padding: 7px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    background: var(--accent);
+    color: var(--accent-fg);
+    box-shadow: 0 1px 2px color-mix(in srgb, var(--accent) 20%, transparent);
+    transition: filter 0.15s, background 0.15s, border-color 0.15s, transform 0.05s;
+  }
+  button:hover { background: var(--accent); filter: brightness(1.1); }
+  button:active { transform: translateY(1px); }
+  button:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 20%, transparent);
+  }
+  button.secondary {
+    background: color-mix(in srgb, var(--surface) 90%, transparent);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+  }
+  button.secondary:hover {
+    background: var(--hover);
+    border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+    filter: none;
+  }
+  button:disabled { opacity: 0.5; transform: none; filter: none; }
+
+  input[type=text], input[type=search], input[type=number], select {
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: color-mix(in srgb, var(--surface) 90%, transparent);
+    color: var(--fg);
+    padding: 7px 12px;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  input[type=text]:hover, input[type=search]:hover, input[type=number]:hover, select:hover {
+    border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  }
+  input:focus-visible, select:focus-visible {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 15%, transparent);
+  }
+
+  .card {
+    border-radius: 16px;
+    border: 1px solid var(--border);
+    background: color-mix(in srgb, var(--surface) 90%, transparent);
+    padding: 16px 20px;
+    margin-bottom: 12px;
+    box-shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
+    backdrop-filter: blur(8px);
+  }
+  .card.active { border-color: var(--accent); }
+
+  .badge {
+    border-radius: 999px;
+    padding: 1px 10px;
+    font-weight: 600;
+    border: 1px solid color-mix(in srgb, var(--accent) 10%, transparent);
+    background: var(--chip);
+    color: var(--chip-fg);
+  }
+  .tag {
+    border-radius: 999px;
+    padding: 0 8px;
+    background: var(--chip);
+    color: var(--chip-fg);
+  }
+  .bar { background: color-mix(in srgb, var(--fg) 12%, transparent); }
+  pre.snippet { border-radius: 12px; }
+  .divider { background: var(--border); }
 `
