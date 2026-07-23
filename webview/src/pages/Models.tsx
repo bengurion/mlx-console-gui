@@ -110,16 +110,37 @@ export function ModelsPage() {
             <div key={m.repo} className={`card col${active ? ' active' : ''}`}>
               <div className="row spread">
                 {/* A converted model has no repo id — its path is its name. */}
-                <strong title={m.repo}>{m.local ? shortRepo(m.repo) : m.repo}</strong>
+                <strong
+                  title={m.repo}
+                  style={{
+                    fontSize: '1.05em',
+                    minWidth: 0,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {m.local ? shortRepo(m.repo) : m.repo}
+                </strong>
                 <span className="row">
                   {m.local && <span className="badge">converted</span>}
-                  {active && <span className="badge">active</span>}
+                  {active && (
+                    <span
+                      className="pill"
+                      style={{
+                        color: 'var(--viz-good, #0ca30c)',
+                        background: 'color-mix(in srgb, var(--viz-good, #0ca30c) 12%, transparent)',
+                      }}
+                    >
+                      ● active
+                    </span>
+                  )}
                 </span>
               </div>
-              <div className="row wrap small muted">
-                <span>{bytes(m.sizeBytes)}</span>
-                <span>{m.nbFiles} files</span>
-                {m.lastModified && <span>{relativeDate(m.lastModified)}</span>}
+              <div className="row wrap small" style={{ gap: 10 }}>
+                <strong>{bytes(m.sizeBytes)}</strong>
+                <span className="muted">{m.nbFiles} files</span>
+                {m.lastModified && <span className="muted">{relativeDate(m.lastModified)}</span>}
               </div>
               <div className="row wrap">
                 <button

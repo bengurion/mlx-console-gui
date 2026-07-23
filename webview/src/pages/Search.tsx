@@ -56,10 +56,25 @@ const FIT_LABEL: Record<FitVerdict, string> = {
 }
 
 const FIT_COLOR: Record<FitVerdict, string> = {
-  fits: 'var(--vscode-testing-iconPassed, #3fb950)',
-  tight: 'var(--vscode-editorWarning-foreground, #d29922)',
-  'too-large': 'var(--vscode-errorForeground, #f85149)',
+  fits: 'var(--viz-good, #0ca30c)',
+  tight: 'var(--viz-warn, #b45309)',
+  'too-large': 'var(--viz-crit, #d03b3b)',
   unknown: 'var(--vscode-descriptionForeground)',
+}
+
+/** The verdict as a tinted pill — the one thing to see first on a card. */
+function FitPill({ fit }: { fit: FitVerdict }) {
+  return (
+    <span
+      className="pill"
+      style={{
+        color: FIT_COLOR[fit],
+        background: `color-mix(in srgb, ${FIT_COLOR[fit]} 12%, transparent)`,
+      }}
+    >
+      {FIT_LABEL[fit]}
+    </span>
+  )
 }
 
 /** Colour for the finer-grained verdicts a conversion plan reports. */
@@ -312,7 +327,7 @@ function ResultCard({
   const format = model.format ?? (model.gguf ? 'unsupported' : 'convertible')
   const tags = model.tags
     .filter((t) => !['mlx', 'safetensors', 'transformers'].includes(t))
-    .slice(0, 4)
+    .slice(0, 3)
 
   return (
     <div className="card col">
@@ -330,11 +345,13 @@ function ResultCard({
         </span>
       </div>
 
-      <div className="row wrap small muted">
-        <span>⬇ {count(model.downloads)}</span>
-        <span>♥ {count(model.likes)}</span>
+      {/* What matters, in the order it matters: does it fit, what does it
+          cost, then the popularity noise — muted, since it never decides
+          whether a model runs on this machine. */}
+      <div className="row wrap small" style={{ gap: 10, alignItems: 'center' }}>
+        {format !== 'unsupported' && <FitPill fit={fit} />}
         {sizeBytes ? (
-          <span
+          <strong
             title={
               model.sizeExact
                 ? 'Exact, from the model’s safetensors metadata'
@@ -343,24 +360,21 @@ function ResultCard({
           >
             {bytes(sizeBytes)}
             {model.sizeExact ? '' : '≈'}
-          </span>
+          </strong>
         ) : null}
         {model.paramsB != null && (
-          <span title="Parameters, from the Hub’s safetensors metadata (experts included)">
-            {model.paramsB >= 1 ? `${model.paramsB.toFixed(model.paramsB < 10 ? 1 : 0)}B` : `${Math.round(model.paramsB * 1000)}M`} params
-          </span>
+          <strong title="Parameters, from the Hub’s safetensors metadata (experts included)">
+            {model.paramsB >= 1 ? `${model.paramsB.toFixed(model.paramsB < 10 ? 1 : 0)}B` : `${Math.round(model.paramsB * 1000)}M`}
+          </strong>
         )}
-        {model.updatedAt && <span>{relativeDate(model.updatedAt)}</span>}
+        <span className="muted">⬇ {count(model.downloads)}</span>
+        <span className="muted">♥ {count(model.likes)}</span>
+        {model.updatedAt && <span className="muted">{relativeDate(model.updatedAt)}</span>}
         {model.gated && <span className="badge">gated</span>}
       </div>
 
-      {format !== 'unsupported' && (
-        <div className="small" style={{ color: FIT_COLOR[fit] }}>
-          {FIT_LABEL[fit]}
-          {format === 'convertible' && (
-            <span className="muted"> · not MLX yet — convert to run it</span>
-          )}
-        </div>
+      {format === 'convertible' && (
+        <div className="small muted">Not MLX yet — convert to run it.</div>
       )}
 
       {format === 'unsupported' && (

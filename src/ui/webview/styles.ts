@@ -59,10 +59,16 @@ export const STYLES = /* css */ `
   }
   label.check { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
   input[type=checkbox] { accent-color: var(--vscode-focusBorder); width: 14px; height: 14px; }
-  /* Card grid: as many columns as the width honestly fits; one in a panel. */
-  .grid-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  /* Card grid: three columns at most — four reads as a wall — down to one in
+     a panel. */
+  .grid-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
                 gap: 10px; align-items: start; }
+  @media (max-width: 1200px) { .grid-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 700px) { .grid-cards { grid-template-columns: 1fr; } }
   .grid-cards > .card { margin-bottom: 0; height: 100%; }
+  /* A status pill: tinted with its own color, never color alone (icon+text). */
+  .pill { display: inline-flex; align-items: center; gap: 4px; border-radius: 999px;
+          padding: 1px 8px; font-size: 0.8em; font-weight: 600; white-space: nowrap; }
   /* One row of controls above content: search box grows, button does not. */
   .toolbar { display: flex; gap: 6px; align-items: center; }
   .toolbar input { flex: 1; }
