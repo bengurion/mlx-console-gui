@@ -161,6 +161,63 @@ def delete(repo_id, local_roots=()):
     emit({"ok": True, "freedBytes": freed})
 
 
+def top():
+    """Who is holding the memory, and how full the models volume is.
+
+    psutil is a soft dependency: without it this answers ok with an empty
+    process list rather than failing, so the dashboard degrades instead of
+    erroring on venvs installed before psutil joined the environment.
+    """
+    out = {"ok": True, "processes": []}
+
+    models_root = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface"))
+    try:
+        usage = shutil.disk_usage(models_root if os.path.isdir(models_root) else os.path.expanduser("~"))
+        out["disk"] = {"path": models_root, "totalBytes": usage.total, "freeBytes": usage.free}
+    except OSError:
+        pass
+
+    try:
+        import psutil
+    except ImportError:
+        emit(out)
+        return
+
+    procs = []
+    for p in psutil.process_iter(["pid", "name", "memory_info"]):
+        try:
+            rss = p.info["memory_info"].rss if p.info["memory_info"] else 0
+            if rss <= 0:
+                continue
+            procs.append({"pid": p.info["pid"], "name": p.info["name"] or "?", "rssBytes": rss})
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    procs.sort(key=lambda x: -x["rssBytes"])
+    procs = procs[:10]
+
+    # cpu_percent needs two samples with a gap; prime, wait briefly, read.
+    handles = {}
+    for entry in procs:
+        try:
+            h = psutil.Process(entry["pid"])
+            h.cpu_percent(None)
+            handles[entry["pid"]] = h
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+    import time
+
+    time.sleep(0.35)
+    for entry in procs:
+        h = handles.get(entry["pid"])
+        try:
+            entry["cpuPercent"] = round(h.cpu_percent(None), 1) if h else 0.0
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            entry["cpuPercent"] = 0.0
+
+    out["processes"] = procs
+    emit(out)
+
+
 def _repo_cache_dir(repo_id):
     """Where this repo's bytes land while hf_hub_download runs."""
     try:
@@ -247,6 +304,7 @@ def main():
     d.add_argument("--local", action="append", default=[])
     dl = sub.add_parser("download")
     dl.add_argument("--repo", required=True)
+    sub.add_parser("top")
 
     args = parser.parse_args()
     if args.cmd == "scan":
@@ -255,6 +313,8 @@ def main():
         delete(args.repo, args.local)
     elif args.cmd == "download":
         download(args.repo)
+    elif args.cmd == "top":
+        top()
     else:
         emit({"ok": False, "error": "unknown command"})
         sys.exit(2)

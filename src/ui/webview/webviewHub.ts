@@ -579,6 +579,8 @@ export class WebviewHub {
       }
       case 'listModels':
         return this.deps.env.status.ready ? this.deps.cache.list() : []
+      case 'topProcesses':
+        return this.deps.env.status.ready ? this.deps.cache.top() : { processes: [] }
       case 'deleteModel': {
         const repo = repoOf()
         const confirmed = await this.confirm({

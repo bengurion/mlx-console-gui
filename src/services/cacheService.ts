@@ -1,5 +1,5 @@
 import type { PythonHelper } from '../backend/pythonHelper'
-import type { LocalModel } from '../shared/protocol'
+import type { LocalModel, TopInfo } from '../shared/protocol'
 
 /** Thin wrapper over the Python helper for the local model cache. */
 export class CacheService {
@@ -11,5 +11,9 @@ export class CacheService {
 
   delete(repo: string): Promise<{ freedBytes: number }> {
     return this.helper.delete(repo)
+  }
+
+  top(): Promise<TopInfo> {
+    return this.helper.top()
   }
 }

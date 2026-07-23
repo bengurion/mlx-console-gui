@@ -1,12 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
-import { onPush } from '../api'
+import { onPush, rpc } from '../api'
 import { bytes } from '../format'
+import { CoreGrid, LineChart, PoolBar, RowBar } from '../charts'
 import { MetricsPage } from './Metrics'
 import { SystemStatus } from './SystemStatus'
-import type { MetricsSnapshot, ModelProfile, ServerStatusLite } from '../../../src/shared/protocol'
+import type {
+  MetricsSnapshot,
+  ModelProfile,
+  ServerStatusLite,
+  TopInfo,
+} from '../../../src/shared/protocol'
 
 /**
- * Local impact: what running this model is costing the machine.
+ * Local impact: what running this model is costing the machine — live.
  *
  * The other views answer "is it working". This one answers "what did it take",
  * which on unified memory is a different and harder question. Three ideas
@@ -18,20 +24,128 @@ import type { MetricsSnapshot, ModelProfile, ServerStatusLite } from '../../../s
  *     utilisation percentage.
  *  2. **Pressure, not utilisation, is the harm signal.** A pinned GPU is a
  *     machine doing its job. Swap-outs while a model is resident are a machine
- *     being squeezed. Those are shown separately and weighted differently.
- *  3. **What is measured is distinguished from what is inferred.** macOS
- *     exposes no per-process GPU memory accounting at any privilege level, so
- *     "held by others" is arithmetic, and says so.
+ *     being squeezed. Those are charted separately and weighted differently.
+ *  3. **The dashboard predicts, not just reports.** The occupancy trend is
+ *     regressed live: if memory keeps growing at the current rate, it says
+ *     when the ceiling arrives — before the swapping starts.
  */
 
-type Sample = { at: number; occupied?: number; swapOut?: number; gpu?: number }
-const HISTORY = 90 // ~3 minutes at the 2s sample rate
+type Sample = {
+  at: number
+  occupied?: number
+  swapOut?: number
+  swapIn?: number
+  gpu?: number
+  cpu?: number
+}
+const HISTORY = 300 // ~10 minutes at the 2s sample rate
+
+/* ------------------------------------------------------------------------- *
+ * The logic engine
+ * ------------------------------------------------------------------------- */
+
+/** Least-squares slope of occupancy, bytes per second, over the last window. */
+function occupancySlope(history: Sample[], windowSamples = 45): number | undefined {
+  const recent = history.slice(-windowSamples).filter((s) => s.occupied !== undefined)
+  if (recent.length < 8) return undefined
+  const t0 = recent[0].at
+  let sx = 0, sy = 0, sxx = 0, sxy = 0
+  for (const s of recent) {
+    const x = (s.at - t0) / 1000
+    const y = s.occupied!
+    sx += x; sy += y; sxx += x * x; sxy += x * y
+  }
+  const denom = recent.length * sxx - sx * sx
+  if (denom === 0) return undefined
+  return (recent.length * sxy - sx * sy) / denom
+}
+
+interface Verdict {
+  tone: 'good' | 'warning' | 'serious' | 'critical'
+  icon: string
+  text: string
+}
+
+const TONE_COLOR: Record<Verdict['tone'], string> = {
+  good: 'var(--viz-good)',
+  warning: 'var(--viz-warn)',
+  serious: 'var(--viz-serious)',
+  critical: 'var(--viz-crit)',
+}
+
+interface Derived {
+  verdict: Verdict
+  /** Seconds until the ceiling at the current growth rate, when it is near. */
+  etaSeconds?: number
+  slope?: number
+  affordableTokens?: number
+  swappingNow: boolean
+}
+
+function derive(args: {
+  history: Sample[]
+  metrics?: MetricsSnapshot
+  budget?: { model: number; others: number; free: number; ceiling: number }
+  profile?: ModelProfile
+  resident: boolean
+}): Derived {
+  const { history, metrics, budget, profile, resident } = args
+  const share = budget ? (budget.model + budget.others) / budget.ceiling : 0
+
+  // Sustained, not instantaneous: one swap-out sample is housekeeping, three
+  // in the last ten is a machine genuinely out of room.
+  const recentOut = history.slice(-10).filter((s) => (s.swapOut ?? 0) > 0).length
+  const swappingNow = recentOut >= 3 && (history.at(-1)?.swapOut ?? 0) > 0
+
+  const slope = occupancySlope(history)
+  let etaSeconds: number | undefined
+  if (slope !== undefined && slope > 1024 * 1024 && budget) {
+    const eta = budget.free / slope
+    if (eta > 0 && eta < 45 * 60) etaSeconds = eta
+  }
+
+  const affordableTokens =
+    budget && profile?.kvBytesPerToken
+      ? Math.max(0, Math.floor(budget.free / profile.kvBytesPerToken))
+      : undefined
+
+  const swapUsed = metrics?.swap?.usedBytes ?? 0
+
+  const verdict: Verdict = swappingNow
+    ? { tone: 'critical', icon: '✕', text: 'Swapping while a model is resident — the machine is being squeezed.' }
+    : share > 0.92
+      ? { tone: 'serious', icon: '▲', text: 'Almost no headroom left. The next allocation will hurt.' }
+      : etaSeconds !== undefined && etaSeconds < 300
+        ? { tone: 'serious', icon: '▲', text: `Memory is growing fast — ceiling in ~${formatEta(etaSeconds)} at this rate.` }
+        : swapUsed > 2 * 1024 ** 3
+          ? { tone: 'warning', icon: '△', text: 'Not swapping now, but swap already holds earlier pressure.' }
+          : etaSeconds !== undefined
+            ? { tone: 'warning', icon: '△', text: `Memory is trending up — ceiling in ~${formatEta(etaSeconds)} if it keeps this rate.` }
+            : resident
+              ? { tone: 'good', icon: '✓', text: 'Comfortable. The model fits with room to spare.' }
+              : { tone: 'good', icon: '✓', text: 'Nothing resident — no model is costing you anything.' }
+
+  return { verdict, etaSeconds, slope, affordableTokens, swappingNow }
+}
+
+function formatEta(seconds: number): string {
+  if (seconds < 90) return `${Math.round(seconds)}s`
+  return `${Math.round(seconds / 60)} min`
+}
+
+const clock = (t: number) =>
+  new Date(t).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+
+/* ------------------------------------------------------------------------- *
+ * The page
+ * ------------------------------------------------------------------------- */
 
 export function DashboardPage() {
   const [m, setMetrics] = useState<MetricsSnapshot>()
   const [status, setStatus] = useState<ServerStatusLite>()
   const [profile, setProfile] = useState<ModelProfile>()
   const [history, setHistory] = useState<Sample[]>([])
+  const [top, setTop] = useState<TopInfo>()
 
   useEffect(
     () =>
@@ -44,7 +158,9 @@ export function DashboardPage() {
               at: next.at,
               occupied: next.occupiedBytes,
               swapOut: next.paging?.swapOutBytesPerSec,
+              swapIn: next.paging?.swapInBytesPerSec,
               gpu: next.gpu.utilizationPercent,
+              cpu: next.cpu.percent,
             },
           ].slice(-HISTORY),
         )
@@ -54,15 +170,27 @@ export function DashboardPage() {
   useEffect(() => onPush<ServerStatusLite>('serverStatus', setStatus), [])
   useEffect(() => onPush<ModelProfile>('modelProfile', setProfile), [])
 
+  // Per-process memory: psutil-backed, polled gently — spawning Python every
+  // two seconds would cost more than it tells.
+  useEffect(() => {
+    let live = true
+    const ask = () => void rpc<TopInfo>('topProcesses').then((t) => live && setTop(t)).catch(() => undefined)
+    ask()
+    const timer = setInterval(ask, 15_000)
+    return () => {
+      live = false
+      clearInterval(timer)
+    }
+  }, [])
+
   const ceiling = m?.wiredLimitBytes ?? m?.gpu.maxRecommendedWorkingSetBytes
   const held = m?.occupiedBytes ?? 0
   const total = m?.memory?.totalBytes
 
   /**
-   * The budget, in the order it gets spent.
-   *
-   * "Others" is everything committed that is not the server: derived by
-   * subtraction because the OS will not attribute GPU memory per process.
+   * The budget, in the order it gets spent. "Others" is everything committed
+   * that is not the server: derived by subtraction because the OS will not
+   * attribute GPU memory per process.
    */
   const budget = useMemo(() => {
     if (!m?.memory || !ceiling) return undefined
@@ -71,19 +199,130 @@ export function DashboardPage() {
     return { model: held, others, free, ceiling }
   }, [m, ceiling, held])
 
-  const swapping = (m?.paging?.swapOutBytesPerSec ?? 0) > 0
-  const swapUsed = m?.swap?.usedBytes ?? 0
+  const logic = useMemo(
+    () => derive({ history, metrics: m, budget, profile, resident: Boolean(status?.loadedModel) }),
+    [history, m, budget, profile, status],
+  )
+
+  const xs = history.map((s) => s.at)
 
   return (
     <div className="col">
-      <VerdictCard
-        swapping={swapping}
-        swapUsed={swapUsed}
-        held={held}
-        ceiling={ceiling}
-        model={status?.loadedModel}
-      />
+      {/* -- the one-line answer, and the numbers behind it ---------------- */}
+      <div className="card col">
+        <div className="row" style={{ gap: 10 }}>
+          <span
+            aria-hidden
+            style={{
+              color: TONE_COLOR[logic.verdict.tone],
+              fontSize: '1.4em',
+              lineHeight: 1,
+              fontWeight: 700,
+            }}
+          >
+            {logic.verdict.icon}
+          </span>
+          <div className="col" style={{ gap: 2 }}>
+            <strong>{logic.verdict.text}</strong>
+            <span className="small muted">
+              {status?.loadedModel ? `${status.loadedModel} resident` : 'no model resident'}
+              {ceiling ? ` · ${bytes(held)} of ${bytes(ceiling)}` : ''}
+            </span>
+          </div>
+        </div>
+        <div className="row wrap" style={{ gap: 18, marginTop: 6 }}>
+          <Stat label="of ceiling in use" value={budget ? `${Math.round(((budget.model + budget.others) / budget.ceiling) * 100)}%` : '—'} />
+          <Stat label="headroom" value={bytes(budget?.free)} />
+          <Stat
+            label="context affordable now"
+            value={logic.affordableTokens !== undefined ? `${compact(logic.affordableTokens)} tok` : '—'}
+            note={profile?.kvBytesPerToken ? `${bytes(profile.kvBytesPerToken)}/token` : 'needs a resident model'}
+          />
+          <Stat label="GPU now" value={m ? `${m.gpu.utilizationPercent ?? 0}%` : '—'} />
+          <Stat label="CPU now" value={m ? `${Math.round(m.cpu.percent ?? 0)}%` : '—'} />
+          {logic.etaSeconds !== undefined && (
+            <Stat
+              label="to ceiling at this rate"
+              value={`~${formatEta(logic.etaSeconds)}`}
+              tone={logic.etaSeconds < 300 ? 'serious' : 'warning'}
+              note={`growing ${bytes(logic.slope ?? 0)}/s`}
+            />
+          )}
+        </div>
+      </div>
 
+      {/* -- live charts ---------------------------------------------------- */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(330px, 1fr))', gap: 12 }}>
+        <div className="card col">
+          <strong>Memory held</strong>
+          <div className="small muted">Weights + KV cache against the wired ceiling.</div>
+          <LineChart
+            xs={xs}
+            series={[{ name: 'held by the server', color: 'var(--viz-1)', points: history.map((s) => s.occupied) }]}
+            area
+            yMax={ceiling}
+            yFormat={(v) => bytes(v)}
+            xFormat={clock}
+            threshold={ceiling ? { value: ceiling, label: `ceiling ${bytes(ceiling)}` } : undefined}
+          />
+        </div>
+
+        <div className="card col">
+          <strong>Compute</strong>
+          <div className="small muted">Prefill saturates everything; decode pins a core or two.</div>
+          <LineChart
+            xs={xs}
+            series={[
+              { name: 'GPU', color: 'var(--viz-1)', points: history.map((s) => s.gpu) },
+              { name: 'CPU', color: 'var(--viz-2)', points: history.map((s) => s.cpu) },
+            ]}
+            yMax={100}
+            yFormat={(v) => `${Math.round(v)}%`}
+            xFormat={clock}
+          />
+          {m?.cpu.perCore && m.cpu.perCore.length > 1 && (
+            <>
+              <CoreGrid perCore={m.cpu.perCore} />
+              <div className="small muted">per core, live</div>
+            </>
+          )}
+        </div>
+
+        <div className="card col">
+          <strong>Pressure</strong>
+          <div className="small muted">
+            Utilisation is the machine working; swap-outs are the machine running out of room.
+          </div>
+          <LineChart
+            xs={xs}
+            series={[
+              { name: 'swap out', color: 'var(--viz-2)', points: history.map((s) => s.swapOut) },
+              { name: 'swap in', color: 'var(--viz-3)', points: history.map((s) => s.swapIn) },
+            ]}
+            yFloor={64 * 1024 * 1024}
+            yFormat={(v) => `${bytes(v)}/s`}
+            xFormat={clock}
+          />
+          <div className="row wrap" style={{ gap: 18 }}>
+            <Stat label="swap in use" value={bytes(m?.swap?.usedBytes)} note={m?.swap ? `of ${bytes(m.swap.totalBytes)}` : undefined} />
+            <Stat label="compressed" value={bytes(m?.memory?.compressedBytes)} />
+            <Stat label="wired" value={bytes(m?.memory?.wiredBytes)} />
+          </div>
+        </div>
+
+        {profile?.kvBytesPerToken && (
+          <div className="card col">
+            <strong>What context costs</strong>
+            <div className="small muted">
+              KV cache is not in the file size: {bytes(profile.kvBytesPerToken)} per token held,
+              from this model's attention shape.
+            </div>
+            <ContextCurve profile={profile} headroom={budget?.free} affordable={logic.affordableTokens} />
+          </div>
+        )}
+      </div>
+
+      {/* -- the pool ------------------------------------------------------- */}
       <div className="card col">
         <strong>Unified memory budget</strong>
         <div className="small muted">
@@ -92,33 +331,21 @@ export function DashboardPage() {
         </div>
         {budget ? (
           <>
-            <StackedBar
+            <PoolBar
               parts={[
-                { label: 'model', bytes: budget.model, color: 'var(--vscode-charts-blue, #3794ff)' },
-                { label: 'other apps', bytes: budget.others, color: 'var(--vscode-badge-background)' },
-                { label: 'free', bytes: budget.free, color: 'transparent' },
+                { label: 'model', value: budget.model, color: 'var(--viz-1)' },
+                { label: 'other apps (inferred)', value: budget.others, color: 'var(--viz-2)' },
+                { label: 'headroom', value: budget.free },
               ]}
               total={budget.ceiling}
+              format={bytes}
             />
-            <div className="row wrap" style={{ gap: 16, marginTop: 4 }}>
-              <Figure label="Held by the server" value={bytes(budget.model)} measured />
-              <Figure label="Held by everything else" value={bytes(budget.others)} />
-              <Figure label="Headroom left" value={bytes(budget.free)} />
-              <Figure
-                label="Usable ceiling"
-                value={bytes(budget.ceiling)}
-                note={
-                  m?.wiredLimitBytes
-                    ? 'iogpu.wired_limit_mb'
-                    : 'Metal max_recommended_working_set_size'
-                }
-                measured
-              />
-              {total && <Figure label="Installed memory" value={bytes(total)} measured />}
-            </div>
-            <div className="small muted" style={{ marginTop: 4 }}>
-              “Held by everything else” is inferred by subtraction — macOS exposes no per-process
-              GPU memory accounting at any privilege level.
+            <div className="small muted">
+              Ceiling {bytes(budget.ceiling)} (
+              {m?.wiredLimitBytes ? 'iogpu.wired_limit_mb' : 'Metal max recommended working set'})
+              {total ? ` of ${bytes(total)} installed` : ''}. “Other apps” is inferred by
+              subtraction — macOS exposes no per-process GPU memory accounting at any privilege
+              level.
             </div>
           </>
         ) : (
@@ -126,255 +353,110 @@ export function DashboardPage() {
         )}
       </div>
 
+      {/* -- who is actually holding it ------------------------------------- */}
+      {top && top.processes.length > 0 && (
+        <div className="card col">
+          <div className="row spread">
+            <strong>Top memory consumers</strong>
+            <span className="small muted">psutil · every 15s</span>
+          </div>
+          <div className="col small" style={{ gap: 4 }}>
+            {top.processes.slice(0, 7).map((p) => (
+              <RowBar
+                key={p.pid}
+                label={p.pid === m?.process?.pid ? `${p.name} (MLX server)` : p.name}
+                value={p.rssBytes}
+                max={top.processes[0]?.rssBytes ?? 1}
+                text={bytes(p.rssBytes)}
+                highlight={p.pid === m?.process?.pid}
+              />
+            ))}
+          </div>
+          {top.disk && (
+            <div className="small muted">
+              Models volume: {bytes(top.disk.freeBytes)} free of {bytes(top.disk.totalBytes)} —{' '}
+              {top.disk.path}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Server, environment and storage: the state of the machine, which
           belongs beside the measurements rather than with the settings. */}
       <SystemStatus />
 
-      {/* Device, CPU, memory and GPU — including the ceiling editor and the
-          per-process GPU sampler. */}
+      {/* GPU memory detail, the ceiling editor, the model's own numbers and
+          the privileged per-process GPU sampler. */}
       <MetricsPage />
-
-      <PressureCard metrics={m} />
-
-      {profile && <ContextCostCard profile={profile} headroom={budget?.free} />}
-
-      <TrendCard history={history} ceiling={ceiling} />
     </div>
   )
 }
 
-/** The one-line answer, in the terms that matter. */
-function VerdictCard(props: {
-  swapping: boolean
-  swapUsed: number
-  held: number
-  ceiling?: number
-  model?: string
+/** KV cost curve: where the headroom line crosses it is the real context limit. */
+function ContextCurve({
+  profile,
+  headroom,
+  affordable,
+}: {
+  profile: ModelProfile
+  headroom?: number
+  affordable?: number
 }) {
-  const { swapping, swapUsed, held, ceiling, model } = props
-  const share = ceiling ? held / ceiling : 0
-
-  const verdict = swapping
-    ? { text: 'Swapping while a model is resident — the machine is being squeezed.', tone: 'bad' }
-    : share > 0.9
-      ? { text: 'Very little headroom left. Another app asking for memory will hurt.', tone: 'warn' }
-      : swapUsed > 2 * 1024 ** 3
-        ? { text: 'Not swapping now, but swap is already in use from earlier pressure.', tone: 'warn' }
-        : held > 0
-          ? { text: 'Comfortable. The model fits with room to spare.', tone: 'ok' }
-          : { text: 'Nothing resident — no model is costing you anything.', tone: 'ok' }
-
-  const color =
-    verdict.tone === 'bad'
-      ? 'var(--vscode-errorForeground)'
-      : verdict.tone === 'warn'
-        ? 'var(--vscode-editorWarning-foreground)'
-        : 'var(--vscode-testing-iconPassed, #3fb950)'
+  const perToken = profile.kvBytesPerToken!
+  const window = profile.contextWindow ?? 131_072
+  const steps = 32
+  const xs = Array.from({ length: steps + 1 }, (_, i) => Math.round((window * i) / steps))
+  const cost = xs.map((n) => n * perToken)
 
   return (
-    <div className="card col">
-      <div className="row" style={{ gap: 8 }}>
-        <span style={{ color, fontSize: '1.6em', lineHeight: 1 }}>●</span>
-        <div className="col" style={{ gap: 2 }}>
-          <strong>{verdict.text}</strong>
-          <span className="small muted">
-            {model ? `${model} resident` : 'no model resident'}
-            {ceiling ? ` · ${bytes(held)} of ${bytes(ceiling)} (${Math.round(share * 100)}%)` : ''}
-          </span>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-/** Pressure: the difference between a busy machine and a suffering one. */
-function PressureCard({ metrics }: { metrics?: MetricsSnapshot }) {
-  const p = metrics?.paging
-  const mem = metrics?.memory
-  const rate = (n?: number) => (n === undefined ? 'measuring…' : n > 0 ? `${bytes(n)}/s` : 'none')
-
-  return (
-    <div className="card col">
-      <strong>Memory pressure</strong>
+    <>
+      <LineChart
+        xs={xs}
+        series={[{ name: 'KV cache cost', color: 'var(--viz-1)', points: cost }]}
+        area
+        yFormat={bytes}
+        xFormat={(x) => `${compact(x)} tok`}
+        threshold={headroom !== undefined ? { value: headroom, label: `headroom ${bytes(headroom)}` } : undefined}
+        marker={
+          affordable !== undefined && affordable < window
+            ? { x: affordable, label: `≈ ${compact(affordable)} tokens fit` }
+            : undefined
+        }
+      />
       <div className="small muted">
-        Utilisation says the machine is working. These say it is running out of room.
+        {affordable !== undefined && profile.contextWindow
+          ? affordable >= profile.contextWindow
+            ? `The full ${compact(profile.contextWindow)}-token window fits in today's headroom.`
+            : `Today's headroom pays for ~${compact(affordable)} of this model's ${compact(profile.contextWindow)}-token window.`
+          : 'Headroom unknown until the first sample.'}
       </div>
-      <div className="row wrap" style={{ gap: 16, marginTop: 4 }}>
-        <Figure
-          label="Swapping out"
-          value={rate(p?.swapOutBytesPerSec)}
-          alarm={(p?.swapOutBytesPerSec ?? 0) > 0}
-          measured
-        />
-        <Figure label="Swapping in" value={rate(p?.swapInBytesPerSec)} measured />
-        <Figure
-          label="Swap in use"
-          value={bytes(metrics?.swap?.usedBytes)}
-          note={metrics?.swap ? `of ${bytes(metrics.swap.totalBytes)}` : undefined}
-          measured
-        />
-        <Figure label="Compressed" value={bytes(mem?.compressedBytes)} measured />
-        <Figure label="Wired" value={bytes(mem?.wiredBytes)} measured />
-        <Figure label="GPU" value={`${metrics?.gpu.utilizationPercent ?? 0}%`} measured />
-        <Figure label="CPU" value={`${Math.round(metrics?.cpu.percent ?? 0)}%`} measured />
-      </div>
-    </div>
+    </>
   )
 }
 
-/** What context length actually costs, in this machine's remaining memory. */
-function ContextCostCard({ profile, headroom }: { profile: ModelProfile; headroom?: number }) {
-  const perToken = profile.kvBytesPerToken
-  if (!perToken) return null
-
-  const lengths = [8_192, 32_768, 65_536, 131_072].filter(
-    (n) => !profile.contextWindow || n <= profile.contextWindow,
-  )
-  if (profile.contextWindow && !lengths.includes(profile.contextWindow)) {
-    lengths.push(profile.contextWindow)
-  }
-  const affordable = headroom ? Math.floor(headroom / perToken) : undefined
-
-  return (
-    <div className="card col">
-      <strong>What context costs</strong>
-      <div className="small muted">
-        KV cache is not in the model's file size. It grows with every token held, at{' '}
-        {bytes(perToken)} per token for this model — derived from its attention shape, not guessed.
-      </div>
-      <table style={{ width: '100%', fontSize: '0.9em', marginTop: 4 }}>
-        <tbody>
-          {lengths.map((n) => {
-            const cost = n * perToken
-            const overBudget = headroom !== undefined && cost > headroom
-            return (
-              <tr key={n}>
-                <td>{n.toLocaleString()} tokens</td>
-                <td
-                  style={{
-                    textAlign: 'right',
-                    color: overBudget ? 'var(--vscode-errorForeground)' : undefined,
-                  }}
-                >
-                  {bytes(cost)}
-                  {overBudget ? ' · over budget' : ''}
-                </td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
-      {affordable !== undefined && (
-        <div className="small muted">
-          Today's headroom pays for about {affordable.toLocaleString()} tokens of KV cache
-          {profile.contextWindow && affordable < profile.contextWindow
-            ? ` — less than this model's ${profile.contextWindow.toLocaleString()}-token window.`
-            : '.'}
-        </div>
-      )}
-    </div>
-  )
+function compact(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 10_000) return `${Math.round(n / 1000)}k`
+  if (n >= 1_000) return `${(n / 1000).toFixed(1)}k`
+  return String(n)
 }
 
-/** A sparkline of the last few minutes: has it been getting worse? */
-function TrendCard({ history, ceiling }: { history: Sample[]; ceiling?: number }) {
-  if (history.length < 3) {
-    return (
-      <div className="card">
-        <strong>Trend</strong>
-        <div className="small muted">Collecting samples…</div>
-      </div>
-    )
-  }
-  const span = Math.max(1, history.length - 1)
-  const path = (pick: (s: Sample) => number | undefined, max: number) =>
-    history
-      .map((s, i) => {
-        const v = pick(s) ?? 0
-        return `${(i / span) * 100},${30 - Math.min(1, v / (max || 1)) * 30}`
-      })
-      .join(' ')
-
-  const peakSwap = Math.max(...history.map((s) => s.swapOut ?? 0), 1)
-
+function Stat(props: { label: string; value?: string; note?: string; tone?: Verdict['tone'] }) {
   return (
-    <div className="card col">
-      <strong>Last {Math.round((history.length * 2) / 60)} minutes</strong>
-      <svg viewBox="0 0 100 30" preserveAspectRatio="none" style={{ width: '100%', height: 60 }}>
-        <polyline
-          points={path((s) => s.occupied, ceiling ?? 1)}
-          fill="none"
-          stroke="var(--vscode-charts-blue, #3794ff)"
-          strokeWidth="0.8"
-          vectorEffect="non-scaling-stroke"
-        />
-        <polyline
-          points={path((s) => s.swapOut, peakSwap)}
-          fill="none"
-          stroke="var(--vscode-errorForeground)"
-          strokeWidth="0.8"
-          vectorEffect="non-scaling-stroke"
-        />
-      </svg>
-      <div className="small muted">
-        <span style={{ color: 'var(--vscode-charts-blue, #3794ff)' }}>■</span> memory held against
-        the ceiling · <span style={{ color: 'var(--vscode-errorForeground)' }}>■</span> swap-out
-        rate (peak {bytes(peakSwap)}/s)
-      </div>
-    </div>
-  )
-}
-
-function Figure(props: {
-  label: string
-  value: string
-  note?: string
-  measured?: boolean
-  alarm?: boolean
-}) {
-  return (
-    <div className="col" style={{ gap: 0, minWidth: 120 }}>
+    <div className="col" style={{ gap: 0, minWidth: 110 }}>
       <span
         style={{
-          fontSize: '1.15em',
-          color: props.alarm ? 'var(--vscode-errorForeground)' : undefined,
+          fontSize: '1.3em',
+          fontWeight: 700,
+          color: props.tone ? TONE_COLOR[props.tone] : undefined,
         }}
       >
-        {props.value}
+        {props.value ?? '—'}
       </span>
-      <span className="small muted">
+      <span className="small muted" style={{ textTransform: 'uppercase', letterSpacing: '0.06em', fontSize: '0.72em' }}>
         {props.label}
-        {/* Say which numbers are read from the system and which are derived. */}
-        {props.measured ? '' : ' (inferred)'}
       </span>
       {props.note && <span className="small muted">{props.note}</span>}
-    </div>
-  )
-}
-
-function StackedBar({
-  parts,
-  total,
-}: {
-  parts: { label: string; bytes: number; color: string }[]
-  total: number
-}) {
-  return (
-    <div
-      className="bar"
-      style={{ height: 14, display: 'flex', border: '1px solid var(--vscode-panel-border)' }}
-    >
-      {parts.map((p) => (
-        <div
-          key={p.label}
-          title={`${p.label}: ${bytes(p.bytes)}`}
-          style={{
-            width: `${Math.max(0, Math.min(100, (p.bytes / total) * 100))}%`,
-            background: p.color,
-            height: '100%',
-          }}
-        />
-      ))}
     </div>
   )
 }

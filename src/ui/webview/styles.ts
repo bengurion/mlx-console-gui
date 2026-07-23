@@ -10,6 +10,27 @@
 
 export const STYLES = /* css */ `
   :root { color-scheme: light dark; }
+  /*
+   * Chart series and status colors. Validated (CVD + contrast, dataviz
+   * six-checks) against white and #0f172a surfaces — which is why they are
+   * fixed hexes rather than theme variables: an editor theme's palette makes
+   * no colorblind-safety promises. Dark steps are selected, not a flip:
+   * VS Code stamps body.vscode-dark; the browser shell stamps :root.dark.
+   */
+  :root {
+    --viz-1: #4f46e5;
+    --viz-2: #eb6834;
+    --viz-3: #1baf7a;
+    --viz-good: #0ca30c;
+    --viz-warn: #fab219;
+    --viz-serious: #ec835a;
+    --viz-crit: #d03b3b;
+  }
+  body.vscode-dark, body.vscode-high-contrast {
+    --viz-1: #6366f1;
+    --viz-2: #d95926;
+    --viz-3: #199e70;
+  }
   * { box-sizing: border-box; }
   body {
     margin: 0;
@@ -167,6 +188,9 @@ export const BROWSER_THEME = /* css */ `
   }
 
   :root.dark {
+    --viz-1: #6366f1;
+    --viz-2: #d95926;
+    --viz-3: #199e70;
     --bg: #070b14;
     --surface: #0f172a;
     --surface-2: #111c34;

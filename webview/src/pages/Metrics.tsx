@@ -93,80 +93,18 @@ export function MetricsPage() {
     await rpc('setWiredLimit', { megabytes }).catch(() => undefined)
   }
 
+  // CPU / memory / GPU utilisation and the per-core strip now live in the
+  // dashboard's charts; this card keeps what they do not: the wired-memory
+  // detail, the ceiling editor, the model's own numbers and the privileged
+  // per-process sampler.
   return (
     <div className="card col">
       <div className="row spread">
-        <strong>Metrics</strong>
-        <span className="badge">{gpu?.deviceName ?? 'system'}</span>
-      </div>
-
-      <Bar
-        label={`CPU (${m?.cpu.cores ?? '—'} cores)`}
-        value={m?.cpu.percent}
-        max={100}
-        detail={m?.cpu.percent !== undefined ? `${m.cpu.percent.toFixed(0)}%` : '—'}
-      />
-
-      {/*
-        Per-core, because the average hides the shape of the work. Prompt
-        prefill saturates every core; token generation is memory-bound and
-        often pins one or two while the rest idle — which averages to a number
-        that looks like nothing is running.
-      */}
-      {m?.cpu.perCore && m.cpu.perCore.length > 1 && (
-        <div className="row" style={{ gap: 2, marginBottom: 6 }} title="Per-core utilisation">
-          {m.cpu.perCore.map((pct, i) => (
-            <div
-              key={i}
-              title={`Core ${i}: ${pct.toFixed(0)}%`}
-              style={{
-                flex: 1,
-                height: 18,
-                minWidth: 3,
-                background: 'rgba(128,128,128,0.25)',
-                borderRadius: 2,
-                display: 'flex',
-                alignItems: 'flex-end',
-              }}
-            >
-              <div
-                style={{
-                  width: '100%',
-                  height: `${Math.max(2, Math.min(100, pct))}%`,
-                  background:
-                    pct > 80
-                      ? 'var(--vscode-editorWarning-foreground)'
-                      : 'var(--vscode-charts-blue, #3794ff)',
-                  borderRadius: 2,
-                }}
-              />
-            </div>
-          ))}
-        </div>
-      )}
-
-      {m?.memory && (
-        <Bar
-          label="Memory"
-          value={m.memory.usedBytes}
-          max={m.memory.totalBytes}
-          detail={`${bytes(m.memory.usedBytes)} / ${bytes(m.memory.totalBytes)}`}
-          tone={m.memory.usedBytes / m.memory.totalBytes > 0.9 ? 'warn' : undefined}
-        />
-      )}
-      {m?.memory && (
-        <div className="small muted" style={{ marginTop: -2, marginBottom: 6 }}>
-          wired {bytes(m.memory.wiredBytes)} · active {bytes(m.memory.activeBytes)} · compressed{' '}
-          {bytes(m.memory.compressedBytes)} · free {bytes(m.memory.freeBytes)}
-        </div>
-      )}
-
-      <Bar label="GPU" value={gpu?.utilizationPercent} max={100} />
-
-      <div className="divider" />
-      <div className="row spread">
-        <strong className="small">GPU memory</strong>
-        <a onClick={editCeiling}>Edit limit</a>
+        <strong>GPU memory</strong>
+        <span className="row" style={{ gap: 10 }}>
+          <span className="badge">{gpu?.deviceName ?? 'system'}</span>
+          <a onClick={editCeiling}>Edit limit</a>
+        </span>
       </div>
 
       <Bar

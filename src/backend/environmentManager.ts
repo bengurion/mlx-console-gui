@@ -275,7 +275,9 @@ export class EnvironmentManager {
 
           report('Installing mlx-lm (this can take a few minutes)…')
           log.info('Installing mlx-lm')
-          const i = await run(this.venvPython, ['-m', 'pip', 'install', '--upgrade', 'mlx-lm'], {
+          // psutil feeds the dashboard's per-process memory table; soft
+          // dependency at runtime, so older venvs keep working without it.
+          const i = await run(this.venvPython, ['-m', 'pip', 'install', '--upgrade', 'mlx-lm', 'psutil'], {
             timeoutMs: 900_000,
           })
           if (i.code !== 0) {

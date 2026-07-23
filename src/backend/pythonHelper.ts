@@ -3,7 +3,7 @@ import * as readline from 'node:readline'
 import { log } from '../core/logging'
 import { convertedRoot, mlxProcessEnv } from '../util/env'
 import type { EnvironmentManager } from './environmentManager'
-import type { LocalModel } from '../shared/protocol'
+import type { LocalModel, TopInfo } from '../shared/protocol'
 
 /** Python tracebacks end with the useful line; surface that, not the whole dump. */
 function pythonError(stderr: string, code: number | null): Error {
@@ -82,6 +82,13 @@ export class PythonHelper {
     ])
     if (!res.ok) throw new Error(res.error ?? 'delete failed')
     return { freedBytes: res.freedBytes ?? 0 }
+  }
+
+  /** Memory top-list + models-volume usage. Degrades to empty without psutil. */
+  async top(): Promise<TopInfo> {
+    const res = await this.runJson<{ ok: boolean; error?: string } & TopInfo>(['top'])
+    if (!res.ok) throw new Error(res.error ?? 'top failed')
+    return { processes: res.processes ?? [], disk: res.disk }
   }
 
   /** Streams NDJSON progress; resolves on 'done', rejects on 'error' or abort. */
