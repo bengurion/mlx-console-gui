@@ -24,6 +24,9 @@ import { MetricsService } from './services/metricsService'
 import { WebUiServer } from './services/webUiServer'
 import { HarmonyProxy } from './services/harmonyProxy'
 import { ReviewService } from './features/reviewService'
+import { appInstalled, discover, launchApp } from './services/daemonClient'
+import { readInstallRoot } from './headless/installRoot'
+import { RemoteHub } from './ui/remoteHub'
 
 /**
  * Bring the previous name's storage with us.
@@ -58,11 +61,29 @@ function carryStorageAcrossRename(context: vscode.ExtensionContext): void {
   log.info(`Migrated ${result.moved.length} item(s) from the previous install`)
 }
 
+/**
+ * Which host owns the runtime.
+ *
+ * `remote` — the desktop app does: the extension is a thin client of its
+ * daemon. `embedded` — this extension does, as it always did. `auto` picks
+ * remote exactly when the app has completed onboarding (the install-root
+ * pointer exists) or a daemon URL was configured by hand, so existing users
+ * see no change until they install the app.
+ */
+function runtimeMode(): 'remote' | 'embedded' {
+  const cfg = vscode.workspace.getConfiguration('mlxConsole')
+  const mode = cfg.get<string>('mode', 'auto')
+  if (mode === 'remote') return 'remote'
+  if (mode === 'embedded') return 'embedded'
+  return readInstallRoot() || cfg.get<string>('daemonUrl', '')?.trim() ? 'remote' : 'embedded'
+}
+
 export async function activate(context: vscode.ExtensionContext) {
   initLogger()
   // Install the editor's answers to what the core asks for, before anything
   // reads a setting.
   setSettingsSource(new VsCodeSettings())
+  if (runtimeMode() === 'remote') return activateRemote(context)
   log.info('MLX Console activating')
   carryStorageAcrossRename(context)
 
@@ -289,6 +310,140 @@ export async function activate(context: vscode.ExtensionContext) {
   })
 
   log.info('MLX Console activated')
+}
+
+/**
+ * Thin-client activation: the desktop app owns the venv, models, downloads
+ * and web server; this extension only shows the panels (proxied to the
+ * daemon) and keeps the chat surfaces, which need nothing but the shared
+ * server state to find the running model server.
+ */
+async function activateRemote(context: vscode.ExtensionContext): Promise<void> {
+  log.info('MLX Console activating (remote — the MLX Console app owns the runtime)')
+  const configuredUrl = () =>
+    vscode.workspace.getConfiguration('mlxConsole').get<string>('daemonUrl', '')
+
+  // Enough to adopt the running server for chat and the status bar; never
+  // used to install anything — that is the app's job now.
+  const env = new EnvironmentManager(vscodeEnvHost(context))
+  const server = new ServerManager(env)
+  const root = readInstallRoot()
+  server.useSharedState(
+    root
+      ? path.join(root, 'server-state.json')
+      : path.join(context.globalStorageUri.fsPath, 'server-state.json'),
+  )
+  const statusBar = new StatusBar()
+  const metrics = new MetricsService(env, server)
+  metrics.elevate = vscodeElevate
+
+  const hub = new RemoteHub({ endpoint: () => discover(configuredUrl()), log })
+
+  context.subscriptions.push(
+    statusBar,
+    { dispose: () => env.dispose() },
+    { dispose: () => server.dispose() },
+    { dispose: () => hub.dispose() },
+    metrics,
+    env.onDidChange((s) => statusBar.setEnv(s)),
+    server.onDidChange((s) => {
+      statusBar.setServer(s.state, s.activeModel)
+      statusBar.setModel(s.modelState, s.loadedModel, s.lastLoadSeconds)
+    }),
+  )
+
+  registerWebviews(context, hub)
+
+  /** Server control goes through the daemon, which owns the processes. */
+  const daemonAction = async (action: 'start' | 'stop' | 'restart') => {
+    const ep = await discover(configuredUrl())
+    if (!ep) return void offerLaunch()
+    const res = await fetch(`${ep.origin}/api/server`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(ep.token ? { 'x-mlx-token': ep.token } : {}),
+      },
+      body: JSON.stringify({ action }),
+    }).catch(() => undefined)
+    if (!res?.ok) void vscode.window.showErrorMessage(`MLX: could not ${action} via the app.`)
+  }
+
+  const offerLaunch = async () => {
+    const pick = await vscode.window.showInformationMessage(
+      'The MLX Console app is not running.',
+      ...(appInstalled() ? ['Launch it'] : []),
+    )
+    if (pick === 'Launch it') void launchApp()
+  }
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('mlxConsole.startServer', () => daemonAction('start')),
+    vscode.commands.registerCommand('mlxConsole.stopServer', () => daemonAction('stop')),
+    vscode.commands.registerCommand('mlxConsole.restartServer', () => daemonAction('restart')),
+    vscode.commands.registerCommand('mlxConsole.stopAllServers', async () => {
+      const { stopped, forced } = await stopAllServers()
+      const total = stopped.length + forced.length
+      void vscode.window.showInformationMessage(
+        total === 0
+          ? 'MLX: no server processes were running.'
+          : `MLX: stopped ${total} server${total === 1 ? '' : 's'}` +
+              (forced.length ? ` (${forced.length} needed SIGKILL)` : '') +
+              '.',
+      )
+    }),
+    vscode.commands.registerCommand('mlxConsole.setup', () =>
+      vscode.window.showInformationMessage(
+        'Setup lives in the MLX Console app now — open it to install or repair the environment.',
+      ),
+    ),
+    vscode.commands.registerCommand('mlxConsole.showLogs', () => log.show()),
+    vscode.commands.registerCommand('mlxConsole.showMenu', () =>
+      vscode.commands.executeCommand('mlxConsole.dashboard.focus'),
+    ),
+    vscode.commands.registerCommand('mlxConsole.openSearch', () =>
+      vscode.commands.executeCommand('mlxConsole.search.focus'),
+    ),
+    vscode.commands.registerCommand('mlxConsole.manageModels', () =>
+      vscode.commands.executeCommand('mlxConsole.models.focus'),
+    ),
+    vscode.commands.registerCommand('mlxConsole.convertModel', () =>
+      vscode.commands.executeCommand('mlxConsole.search.focus'),
+    ),
+    vscode.commands.registerCommand('mlxConsole.testCompletion', () => testCompletion(server)),
+    vscode.commands.registerCommand('mlxConsole.openWebUi', async () => {
+      const ep = await discover(configuredUrl())
+      if (!ep) return void offerLaunch()
+      const url = `${ep.origin}/${ep.token ? `?t=${ep.token}` : ''}`
+      void vscode.env.openExternal(vscode.Uri.parse(url))
+    }),
+    vscode.commands.registerCommand('mlxConsole.copyWebUiUrl', async () => {
+      const ep = await discover(configuredUrl())
+      if (!ep) return void offerLaunch()
+      await vscode.env.clipboard.writeText(`${ep.origin}/${ep.token ? `?t=${ep.token}` : ''}`)
+      void vscode.window.showInformationMessage('MLX: dashboard URL copied.')
+    }),
+  )
+
+  // Chat works off the shared server state the daemon maintains.
+  registerParticipant(context)
+  const providerDisposable = registerLmChatProvider(server, metrics)
+  if (providerDisposable) context.subscriptions.push(providerDisposable)
+  registerTools(context, server)
+
+  const review = new ReviewService()
+  context.subscriptions.push(
+    { dispose: () => review.dispose() },
+    vscode.commands.registerCommand('mlxConsole.reviewFile', () => review.reviewActiveFile()),
+    vscode.commands.registerCommand('mlxConsole.reviewDiff', () => review.reviewGitDiff()),
+    vscode.commands.registerCommand('mlxConsole.explainSelection', () =>
+      vscode.commands.executeCommand('workbench.action.chat.open', { query: '@mlx /explain ' }),
+    ),
+  )
+
+  void env.refresh().then((s) => statusBar.setEnv(s))
+  if (!(await discover(configuredUrl()))) void offerLaunch()
+  log.info('MLX Console activated (remote)')
 }
 
 async function maybeOnboard(
