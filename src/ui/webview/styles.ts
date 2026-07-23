@@ -58,6 +58,18 @@ export const STYLES = /* css */ `
     border-radius: 4px;
   }
   label.check { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
+  input[type=checkbox] { accent-color: var(--vscode-focusBorder); width: 14px; height: 14px; }
+  /* Card grid: as many columns as the width honestly fits; one in a panel. */
+  .grid-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+                gap: 10px; align-items: start; }
+  .grid-cards > .card { margin-bottom: 0; height: 100%; }
+  /* One row of controls above content: search box grows, button does not. */
+  .toolbar { display: flex; gap: 6px; align-items: center; }
+  .toolbar input { flex: 1; }
+  /* Filters sit in one wrapping row and size to their content. */
+  .filters { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .filters select { width: auto; }
+  a.danger { color: var(--vscode-errorForeground); }
   button {
     padding: 4px 10px;
     color: var(--vscode-button-foreground);
@@ -129,6 +141,11 @@ export const STYLES = /* css */ `
  */
 export const BROWSER_THEME = /* css */ `
   :root {
+    /* One theme at a time: with "light dark" the UA styles any control the
+       stylesheet missed for the OS preference, which put dark inputs on a
+       light page. The .dark class is the only switch. */
+    color-scheme: light;
+
     /* -- semantic tokens (light) ------------------------------------- */
     --bg: #f7f8fc;
     --surface: #ffffff;
@@ -188,6 +205,7 @@ export const BROWSER_THEME = /* css */ `
   }
 
   :root.dark {
+    color-scheme: dark;
     --viz-1: #6366f1;
     --viz-2: #d95926;
     --viz-3: #199e70;
@@ -285,7 +303,7 @@ export const BROWSER_UI = /* css */ `
   }
   button:disabled { opacity: 0.5; transform: none; filter: none; }
 
-  input[type=text], input[type=search], input[type=number], select {
+  input:not([type=checkbox]):not([type=radio]):not([type=range]), select, textarea {
     border-radius: 12px;
     border: 1px solid var(--border);
     background: color-mix(in srgb, var(--surface) 90%, transparent);
@@ -294,10 +312,10 @@ export const BROWSER_UI = /* css */ `
     box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
     transition: border-color 0.15s, box-shadow 0.15s;
   }
-  input[type=text]:hover, input[type=search]:hover, input[type=number]:hover, select:hover {
+  input:not([type=checkbox]):not([type=radio]):not([type=range]):hover, select:hover, textarea:hover {
     border-color: color-mix(in srgb, var(--accent) 30%, transparent);
   }
-  input:focus-visible, select:focus-visible {
+  input:focus-visible, select:focus-visible, textarea:focus-visible {
     outline: none;
     border-color: var(--accent);
     box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 15%, transparent);

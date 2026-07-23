@@ -146,32 +146,19 @@ export function SearchPage() {
 
   return (
     <div className="col">
-      <input
-        type="search"
-        placeholder="Search Hugging Face models…"
-        value={query.text}
-        onChange={(e) => patch({ text: e.target.value })}
-        onKeyDown={(e) => e.key === 'Enter' && doSearch(query)}
-      />
-      <div className="row wrap small">
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={query.mlxCommunity}
-            onChange={(e) => patch({ mlxCommunity: e.target.checked })}
-          />
-          mlx-community
-        </label>
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={query.onlyFits ?? false}
-            onChange={(e) => patch({ onlyFits: e.target.checked })}
-          />
-          Fits my machine
-        </label>
+      <div className="toolbar">
+        <input
+          type="search"
+          placeholder="Search Hugging Face models…"
+          value={query.text}
+          onChange={(e) => patch({ text: e.target.value })}
+          onKeyDown={(e) => e.key === 'Enter' && doSearch(query)}
+        />
+        <button onClick={() => doSearch(query)} disabled={loading}>
+          {loading ? 'Searching…' : 'Search'}
+        </button>
       </div>
-      <div className="row wrap">
+      <div className="filters small">
         <select
           value={query.scope}
           title={SCOPES.find((sc) => sc.key === query.scope)?.hint}
@@ -211,21 +198,32 @@ export function SearchPage() {
         <select value={query.sort} onChange={(e) => patch({ sort: e.target.value as SortKey })}>
           {SORTS.map((s) => (
             <option key={s.key} value={s.key}>
-              {s.label}
+              Sort: {s.label}
             </option>
           ))}
         </select>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={query.mlxCommunity}
+            onChange={(e) => patch({ mlxCommunity: e.target.checked })}
+          />
+          mlx-community
+        </label>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={query.onlyFits ?? false}
+            onChange={(e) => patch({ onlyFits: e.target.checked })}
+          />
+          Fits my machine
+        </label>
+        {machine && (
+          <span className="muted" style={{ marginLeft: 'auto' }}>
+            {bytes(machine.totalRamBytes)} unified · usable budget {bytes(machine.budgetBytes)}
+          </span>
+        )}
       </div>
-      <button onClick={() => doSearch(query)} disabled={loading}>
-        {loading ? 'Searching…' : 'Search'}
-      </button>
-
-      {machine && (
-        <div className="small muted">
-          {bytes(machine.totalRamBytes)} unified memory · {machine.cores} cores · usable budget{' '}
-          {bytes(machine.budgetBytes)}
-        </div>
-      )}
 
       {error && <div className="card small">⚠️ {error}</div>}
 
@@ -257,7 +255,7 @@ export function SearchPage() {
         </div>
       )}
 
-      <div className="col">
+      <div className="grid-cards">
         {visible.map((m) => (
           <ResultCard
             key={m.id}
@@ -269,16 +267,18 @@ export function SearchPage() {
       </div>
 
       {truncated && !loading && (
-        <button
-          className="secondary"
-          onClick={() => {
-            const next = { ...query, limit: (query.limit ?? 50) + 50 }
-            setQuery(next)
-            void doSearch(next)
-          }}
-        >
-          Load more ({total - visible.length} more)
-        </button>
+        <div className="row" style={{ justifyContent: 'center' }}>
+          <button
+            className="secondary"
+            onClick={() => {
+              const next = { ...query, limit: (query.limit ?? 50) + 50 }
+              setQuery(next)
+              void doSearch(next)
+            }}
+          >
+            Load more ({total - visible.length} more)
+          </button>
+        </div>
       )}
     </div>
   )
@@ -317,11 +317,15 @@ function ResultCard({
   return (
     <div className="card col">
       <div className="row spread">
-        <a onClick={() => openExternal(`https://huggingface.co/${model.id}`)}>
+        <a
+          onClick={() => openExternal(`https://huggingface.co/${model.id}`)}
+          title={model.id}
+          style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+        >
           <strong>{model.id}</strong>
         </a>
         <span className="row">
-          {format === 'convertible' && <span className="badge">convert</span>}
+          {/* The CTA button already says Convert; a chip repeating it is noise. */}
           {model.quant && <span className="badge">{model.quant}</span>}
         </span>
       </div>

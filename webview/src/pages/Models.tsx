@@ -61,10 +61,28 @@ export function ModelsPage() {
         </div>
       )}
 
+      {models.length > 0 && (
+        <div className="row spread small muted">
+          <span>
+            {models.length} model{models.length === 1 ? '' : 's'} ·{' '}
+            {bytes(models.reduce((sum, m) => sum + m.sizeBytes, 0))} on disk
+          </span>
+          <a onClick={() => void refresh()}>Refresh</a>
+        </div>
+      )}
+
       {models.length === 0 ? (
-        <div className="empty muted">No models downloaded yet. Use the Search view to add one.</div>
+        <div className="empty muted col" style={{ alignItems: 'center', gap: 8 }}>
+          <div>No models downloaded yet.</div>
+          {window.__MLX_SHOW__ ? (
+            <button onClick={() => window.__MLX_SHOW__?.('search')}>Search Hugging Face</button>
+          ) : (
+            <div className="small">Use the Search view to add one.</div>
+          )}
+        </div>
       ) : (
-        models.map((m) => {
+        <div className="grid-cards">
+        {models.map((m) => {
           const active = server?.activeModel === m.repo
           const working = busy === m.repo
           // Launching a model that is already resident would drop its weights
@@ -130,18 +148,20 @@ export function ModelsPage() {
                 </button>
                 <button
                   className="secondary"
-                  disabled={working}
-                  title={`Delete ${m.repo} from disk`}
-                  onClick={() => act(m.repo, 'deleteModel')}
-                >
-                  Delete
-                </button>
-                <button
-                  className="secondary"
                   onClick={() => setConfiguring((c) => (c === m.repo ? undefined : m.repo))}
                 >
                   {configuring === m.repo ? 'Hide settings' : 'Settings'}
                 </button>
+                {/* Destructive, so quiet: a link at the far edge rather than a
+                    button shoulder-to-shoulder with Launch. */}
+                <a
+                  className="danger small"
+                  style={{ marginLeft: 'auto', opacity: working ? 0.5 : undefined }}
+                  title={`Delete ${m.repo} from disk`}
+                  onClick={() => !working && act(m.repo, 'deleteModel')}
+                >
+                  Delete
+                </a>
               </div>
 
               {/* Per-model generation settings live with the model, since that
@@ -149,12 +169,9 @@ export function ModelsPage() {
               {configuring === m.repo && <ModelConfig repo={m.repo} />}
             </div>
           )
-        })
+        })}
+        </div>
       )}
-
-      <div className="row small">
-        <a onClick={() => void refresh()}>Refresh</a>
-      </div>
     </div>
   )
 }

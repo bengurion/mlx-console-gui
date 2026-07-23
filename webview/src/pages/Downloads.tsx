@@ -26,7 +26,23 @@ export function DownloadsPage() {
   useEffect(() => onPush<ConvertItem[]>('converts', setConverts), [])
 
   if (items.length === 0 && converts.length === 0) {
-    return <div className="empty muted">No downloads yet.</div>
+    return (
+      <div className="empty col" style={{ alignItems: 'center', gap: 8, paddingTop: 64 }}>
+        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="var(--vscode-descriptionForeground)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/>
+          <line x1="12" x2="12" y1="15" y2="3"/>
+        </svg>
+        <strong>Nothing downloading</strong>
+        <div className="small muted" style={{ maxWidth: 420, textAlign: 'center' }}>
+          Models you download or convert appear here with live progress, and land in the Models
+          view when they finish.
+        </div>
+        {window.__MLX_SHOW__ && (
+          <button onClick={() => window.__MLX_SHOW__?.('search')}>Search Hugging Face</button>
+        )}
+      </div>
+    )
   }
 
   return (

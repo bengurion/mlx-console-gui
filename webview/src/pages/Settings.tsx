@@ -162,7 +162,9 @@ export function Field({
  */
 export function SettingsPage() {
   const settings = useSettings()
-  const [open, setOpen] = useState(false)
+  // Open by default: this IS the settings page — a list you must first ask to
+  // see is a page that looks broken.
+  const [open, setOpen] = useState(true)
   const ref = useRef<HTMLDivElement>(null)
   const [filter, setFilter] = useState('')
 
@@ -218,21 +220,24 @@ export function SettingsPage() {
             placeholder="Filter settings…"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            style={{ width: '100%', marginTop: 6 }}
+            style={{ width: '100%', marginTop: 6, maxWidth: 480 }}
           />
 
-          {groups.map((g) => (
-            <div key={g} style={{ marginTop: 10 }}>
-              <div className="small" style={{ opacity: 0.8, marginBottom: 4 }}>
-                <strong>{GROUP_LABELS[g] ?? g}</strong>
+          {/* Groups side by side where the width allows; one column in a panel. */}
+          <div className="grid-cards" style={{ marginTop: 4 }}>
+            {groups.map((g) => (
+              <div key={g}>
+                <div className="small" style={{ opacity: 0.8, marginBottom: 4 }}>
+                  <strong>{GROUP_LABELS[g] ?? g}</strong>
+                </div>
+                {visible
+                  .filter((s) => s.group === g)
+                  .map((s) => (
+                    <Field key={s.key} spec={s} />
+                  ))}
               </div>
-              {visible
-                .filter((s) => s.group === g)
-                .map((s) => (
-                  <Field key={s.key} spec={s} />
-                ))}
-            </div>
-          ))}
+            ))}
+          </div>
 
           {visible.length === 0 && <div className="small muted">No settings match “{filter}”.</div>}
         </>
