@@ -223,20 +223,27 @@ export function SettingsPage() {
             style={{ width: '100%', marginTop: 6, maxWidth: 480 }}
           />
 
-          {/* Two columns of groups; one in a narrow panel. */}
+          {/* Two column divs with the groups stacked inside — not one grid
+              cell per group, which left a hole under every short group. */}
           <div className="grid-2" style={{ marginTop: 4 }}>
-            {groups.map((g) => (
-              <div key={g}>
-                <div className="small" style={{ opacity: 0.8, marginBottom: 4 }}>
-                  <strong>{GROUP_LABELS[g] ?? g}</strong>
-                </div>
-                {visible
-                  .filter((s) => s.group === g)
-                  .map((s) => (
-                    <Field key={s.key} spec={s} />
+            {[groups.filter((_, i) => i % 2 === 0), groups.filter((_, i) => i % 2 === 1)].map(
+              (columnGroups, col) => (
+                <div key={col}>
+                  {columnGroups.map((g) => (
+                    <div key={g} style={{ marginBottom: 18 }}>
+                      <div className="small" style={{ opacity: 0.8, marginBottom: 4 }}>
+                        <strong>{GROUP_LABELS[g] ?? g}</strong>
+                      </div>
+                      {visible
+                        .filter((s) => s.group === g)
+                        .map((s) => (
+                          <Field key={s.key} spec={s} />
+                        ))}
+                    </div>
                   ))}
-              </div>
-            ))}
+                </div>
+              ),
+            )}
           </div>
 
           {visible.length === 0 && <div className="small muted">No settings match “{filter}”.</div>}
