@@ -200,10 +200,15 @@ git clone <this-repo>
 cd mlx_console_gui
 npm install
 npm run vsce:package    # README sync + production esbuild + vsce package
-code --install-extension "$(ls -t mlx-console-gui-*.vsix | head -1)" --force
 ```
 
-Reload the window afterwards, then open the **MLX Console** icon in the activity bar.
+Then install the packaged extension and reload the window:
+
+```bash
+code --install-extension mlx-console-gui-0.0.18.vsix --force
+```
+
+Open the **MLX Console** icon in the activity bar afterwards.
 
 How it behaves depends on whether the desktop app is installed (`mlxConsole.mode`,
 default `auto`):
