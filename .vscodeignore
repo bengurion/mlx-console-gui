@@ -10,8 +10,12 @@
 .gitignore
 .venv/**
 .vscode/**
+build/**
+dist/electron/**
 docs/**
+electron-builder.yml
 esbuild.mjs
+release/**
 models/**
 node_modules/**
 scripts/**

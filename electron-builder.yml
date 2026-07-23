@@ -1,0 +1,33 @@
+# Unsigned dev builds of the desktop app. Signing/notarization is a later,
+# deliberate step — see the README's Gatekeeper note for running these.
+appId: dev.mlx-console.app
+productName: MLX Console
+directories:
+  output: release
+# vsce reads "main" as dist/extension.js; the app's entry is set here instead
+# so one package.json serves both packagers.
+extraMetadata:
+  main: dist/electron/main.cjs
+# The asar holds only what Electron itself loads. Everything Python spawns or
+# the daemon serves off disk ships as plain files under Contents/Resources —
+# python cannot exec a script that lives inside an asar archive.
+asar: true
+files:
+  - dist/electron/**
+  - package.json
+extraResources:
+  - from: dist/webview
+    to: dist/webview
+  - from: dist/cli.js
+    to: dist/cli.js
+  - from: resources/py
+    to: resources/py
+mac:
+  category: public.app-category.developer-tools
+  identity: null
+  target:
+    - target: dmg
+      arch: [arm64]
+    - target: zip
+      arch: [arm64]
+npmRebuild: false

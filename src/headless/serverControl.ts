@@ -12,6 +12,7 @@ import { execFile, spawn } from 'node:child_process'
 import { buildServerArgs } from '../backend/serverArgs.ts'
 import { isUsableState, parseState, pidAlive, type SharedServerState } from '../backend/serverRegistry.ts'
 import { resolveVenv, venvBin, venvCandidates, userDirs, STORAGE_IDS } from './hostPaths.ts'
+import { readInstallRoot } from './installRoot.ts'
 import type { SettingsStore } from './settingsStore.ts'
 
 /** How long a SIGTERM gets before SIGKILL. Matches the extension. */
@@ -28,9 +29,16 @@ export interface HeadlessStatus {
 
 /** The extension writes its shared state here; the CLI reads the same file. */
 export function stateFileCandidates(home = os.homedir()): string[] {
-  return userDirs(home).flatMap((d) =>
-    STORAGE_IDS.map((id) => path.join(d, 'globalStorage', id, 'server-state.json')),
-  )
+  // The install root first: once the desktop app owns the runtime, its
+  // registry is the one every front end should adopt.
+  const root = readInstallRoot(home)
+  const fromRoot = root ? [path.join(root, 'server-state.json')] : []
+  return [
+    ...fromRoot,
+    ...userDirs(home).flatMap((d) =>
+      STORAGE_IDS.map((id) => path.join(d, 'globalStorage', id, 'server-state.json')),
+    ),
+  ]
 }
 
 export function readSharedState(files: string[]): SharedServerState | undefined {

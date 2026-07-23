@@ -3,7 +3,7 @@
  * Types only — safe to import from both the Node and browser bundles.
  */
 
-export type ViewId = 'dashboard' | 'models' | 'search' | 'downloads' | 'settings' | 'clients'
+export type ViewId = 'dashboard' | 'models' | 'search' | 'downloads' | 'settings' | 'clients' | 'setup'
 
 export type FitVerdict = 'fits' | 'tight' | 'too-large' | 'unknown'
 
@@ -321,6 +321,51 @@ export interface ConvertPlan {
   error?: string
 }
 
+/** One process as psutil sees it, for the "who is eating the memory" table. */
+export interface TopProcess {
+  pid: number
+  name: string
+  rssBytes: number
+  cpuPercent: number
+}
+
+/** Answer to the `topProcesses` RPC. Best-effort: absent without psutil. */
+export interface TopInfo {
+  processes: TopProcess[]
+  /** The volume holding the models directory. */
+  disk?: { path: string; totalBytes: number; freeBytes: number }
+}
+
+/**
+ * What first-run onboarding found on the machine, so the page can offer to
+ * adopt an existing install instead of building a second one.
+ */
+export interface SetupDetection {
+  /** System Python, or absent when none was found. */
+  python?: { path: string; version: string }
+  /** A venv with mlx-lm already in it (the extension's, usually). */
+  existingVenv?: string
+  /** A models directory configured in VS Code or the CLI config. */
+  existingModelsDir?: string
+  /** Suggested install root when the user has no preference. */
+  defaultRoot: string
+  /** Free bytes on the home volume, for the "models are large" warning. */
+  freeBytes?: number
+}
+
+export interface SetupInstallParams {
+  root: string
+  /** Keep using this venv rather than creating `<root>/venv`. */
+  adoptVenv?: string
+  /** Keep models where they are rather than under `<root>/models`. */
+  adoptModelsDir?: string
+}
+
+/** One line of install progress, streamed while `setupInstall` runs. */
+export interface SetupProgress {
+  message: string
+}
+
 export type RpcMethod =
   | 'search'
   | 'getModelSize'
@@ -354,6 +399,10 @@ export type RpcMethod =
   | 'getEnvStatus'
   | 'getExternalClients'
   | 'runSetup'
+  | 'topProcesses'
+  | 'setupDetect'
+  | 'setupPickRoot'
+  | 'setupInstall'
 
 /** webview → host */
 export type HostBound =
@@ -388,3 +437,5 @@ export type WebviewBound =
    * Better to say so.
    */
   | { type: 'push'; name: 'stale'; data: { host: string; client: string } }
+  /** Install progress for the first-run Setup page. */
+  | { type: 'push'; name: 'setupProgress'; data: SetupProgress }

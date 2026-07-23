@@ -51,6 +51,42 @@ const cliConfig = {
   logLevel: 'info',
 }
 
+/**
+ * The desktop shell. Two small bundles: the main process (which imports the
+ * same daemon assembly the CLI uses) and the preload. Electron ≥ 30 ships
+ * Node ≥ 20; the node18 target elsewhere is a floor for the extension host,
+ * not a ceiling here.
+ */
+/** @type {import('esbuild').BuildOptions} */
+const electronMainConfig = {
+  entryPoints: ['src/electron/main.ts'],
+  bundle: true,
+  outfile: 'dist/electron/main.cjs',
+  platform: 'node',
+  format: 'cjs',
+  target: 'node20',
+  external: ['electron'],
+  sourcemap: !production,
+  minify: production,
+  define,
+  logLevel: 'info',
+}
+
+/** @type {import('esbuild').BuildOptions} */
+const electronPreloadConfig = {
+  entryPoints: ['src/electron/preload.ts'],
+  bundle: true,
+  outfile: 'dist/electron/preload.cjs',
+  platform: 'node',
+  format: 'cjs',
+  target: 'node20',
+  external: ['electron'],
+  sourcemap: !production,
+  minify: production,
+  define,
+  logLevel: 'info',
+}
+
 const webviewEntry = 'webview/src/index.tsx'
 /** @type {import('esbuild').BuildOptions} */
 const webviewConfig = {
@@ -68,7 +104,7 @@ const webviewConfig = {
 }
 
 // The webview app is added in a later milestone; only build it once its entry exists.
-const configs = [extensionConfig, cliConfig]
+const configs = [extensionConfig, cliConfig, electronMainConfig, electronPreloadConfig]
 if (existsSync(webviewEntry)) configs.push(webviewConfig)
 
 if (watch) {

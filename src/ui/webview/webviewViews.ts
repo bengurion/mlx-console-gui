@@ -7,10 +7,23 @@
  */
 import * as vscode from 'vscode'
 import { getWebviewHtml } from './html'
-import type { WebviewHub } from './webviewHub'
+import type { MessageSink } from './webviewHub'
 import type { ViewId } from '../../shared/protocol'
 
-const VIEW_IDS: Record<ViewId, string> = {
+/**
+ * What a webview provider needs from its hub. `WebviewHub` satisfies this
+ * with the real services behind it; `RemoteHub` satisfies it by proxying the
+ * same protocol to the desktop app's daemon.
+ */
+export interface PanelHub {
+  connect(sink: MessageSink, opts?: { sampleMetrics?: boolean }): { dispose(): void }
+  handleMessage(sink: MessageSink, raw: unknown): Promise<void>
+  sampleMetrics(): { dispose(): void }
+}
+
+// `setup` deliberately absent: first-run onboarding belongs to the desktop
+// app; the extension has no such panel.
+const VIEW_IDS: Record<Exclude<ViewId, 'setup'>, string> = {
   dashboard: 'mlxConsole.dashboard',
   models: 'mlxConsole.models',
   search: 'mlxConsole.search',
@@ -22,7 +35,7 @@ const VIEW_IDS: Record<ViewId, string> = {
 class MlxWebviewProvider implements vscode.WebviewViewProvider {
   constructor(
     private readonly view: ViewId,
-    private readonly hub: WebviewHub,
+    private readonly hub: PanelHub,
     private readonly extensionUri: vscode.Uri,
   ) {}
 
@@ -63,8 +76,8 @@ class MlxWebviewProvider implements vscode.WebviewViewProvider {
 }
 
 /** Registers all four webview view providers. */
-export function registerWebviews(context: vscode.ExtensionContext, hub: WebviewHub): void {
-  for (const view of Object.keys(VIEW_IDS) as ViewId[]) {
+export function registerWebviews(context: vscode.ExtensionContext, hub: PanelHub): void {
+  for (const view of Object.keys(VIEW_IDS) as (keyof typeof VIEW_IDS)[]) {
     context.subscriptions.push(
       vscode.window.registerWebviewViewProvider(
         VIEW_IDS[view],

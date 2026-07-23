@@ -21,6 +21,7 @@ import type { SettingsSource } from '../core/settings'
 import type { EnvHost } from '../backend/environmentManager'
 import type { HubHost } from '../ui/webview/webviewHub'
 import { STORAGE_IDS, userDirs } from './hostPaths'
+import { readInstallRoot } from './installRoot'
 import type { SettingsStore } from './settingsStore'
 
 /** The CLI's config file, presented as a settings source. */
@@ -47,10 +48,13 @@ export class StoreSettings implements SettingsSource {
 }
 
 /**
- * Where the daemon keeps state: the editor's globalStorage if the extension
- * has ever run, otherwise its own directory.
+ * Where the daemon keeps state: the install root once the desktop app has
+ * completed onboarding, else the editor's globalStorage if the extension has
+ * ever run, otherwise its own directory.
  */
 export function storageDir(home = os.homedir()): string {
+  const root = readInstallRoot(home)
+  if (root) return root
   const shared = userDirs(home)
     .flatMap((d) => STORAGE_IDS.map((id) => path.join(d, 'globalStorage', id)))
     .find((d) => fs.existsSync(path.join(d, 'venv')))
