@@ -1,8 +1,15 @@
 import { Config } from '../config.ts'
 import { log } from '../core/logging.ts'
-import { HF_API, buildSearchUrl, deriveQuant } from './hfQuery.ts'
-import { bytesFromSafetensors, classifyFormat, estimateBytes, isGguf } from './modelFit.ts'
-import type { ModelSummary, SearchQuery } from '../shared/protocol'
+import { HF_API, MAX_PAGE, buildSearchUrl, deriveQuant, nextPageUrl } from './hfQuery.ts'
+import {
+  bytesFromSafetensors,
+  classifyFormat,
+  estimateBytes,
+  isGguf,
+  effectiveParamsB,
+  withinParams,
+} from './modelFit.ts'
+import type { ModelSummary, SearchQuery, SearchResult } from '../shared/protocol'
 
 interface HfModel {
   id?: string
@@ -14,6 +21,9 @@ interface HfModel {
   pipeline_tag?: string
   gated?: boolean | string
   library_name?: string
+  /** Present via `expand[]=safetensors`; absent means the repo has none. */
+  safetensors?: { parameters?: Record<string, number>; total?: number }
+  cardData?: { base_model?: string | string[] }
 }
 
 interface HfModelInfo {
@@ -21,6 +31,19 @@ interface HfModelInfo {
 }
 
 const SIZE_CONCURRENCY = 6
+
+/**
+ * How many pages one search may fetch.
+ *
+ * A ceiling on effort, not on correctness: when it is reached the result says
+ * how many entries were examined, so "3 results" never masquerades as "3 exist".
+ */
+const MAX_PAGES = 5
+
+/** Ask for a big page when filtering client-side; there is no extra round trip. */
+function pageSize(limit: number): number {
+  return Math.min(MAX_PAGE, Math.max(100, limit * 4))
+}
 
 /** Read-only client for the public Hugging Face Hub search + model APIs. */
 /**
@@ -35,13 +58,13 @@ const SEARCH_TTL_MS = 60_000
 
 export class HuggingFaceService {
   private readonly sizeCache = new Map<string, number | undefined>()
-  private readonly searchCache = new Map<string, { at: number; results: ModelSummary[] }>()
+  private readonly searchCache = new Map<string, { at: number; results: SearchResult }>()
   /**
    * Searches currently in flight, so two callers asking the same thing at once
    * make one request. A double-clicked button and React's development
    * double-mount both land here.
    */
-  private readonly inFlight = new Map<string, Promise<ModelSummary[]>>()
+  private readonly inFlight = new Map<string, Promise<SearchResult>>()
 
   private headers(): Record<string, string> {
     const h: Record<string, string> = { Accept: 'application/json' }
@@ -51,11 +74,12 @@ export class HuggingFaceService {
   }
 
   /**
-   * Returns every match after filtering (not truncated to `query.limit`) so the
-   * caller can report an accurate total. We over-fetch because the quant/GGUF
-   * filters run client-side and would otherwise starve a limit-sized page.
+   * Every match found, with how much of the Hub was looked at to find them.
+   *
+   * Not truncated to `query.limit`: the caller reports the total and decides
+   * how many to show.
    */
-  async search(query: SearchQuery): Promise<ModelSummary[]> {
+  async search(query: SearchQuery): Promise<SearchResult> {
     const key = JSON.stringify(query)
     const cached = this.searchCache.get(key)
     if (cached && Date.now() - cached.at < SEARCH_TTL_MS) return cached.results
@@ -79,26 +103,49 @@ export class HuggingFaceService {
     return request
   }
 
-  private async runSearch(query: SearchQuery): Promise<ModelSummary[]> {
+  /**
+   * Pages until the request is genuinely satisfied.
+   *
+   * The old behaviour fetched one window of `limit * 3` and filtered that,
+   * which quietly conflated "there are few matches" with "we only looked at
+   * 150 rows". A parameter-size or quantization filter would then show a
+   * handful of results while thousands existed further down the ranking. So
+   * this follows the Hub's cursor until it has enough to fill the page with
+   * room to spare, the results run out, or the page budget is reached — and
+   * reports which of those happened rather than implying the first.
+   */
+  private async runSearch(query: SearchQuery): Promise<SearchResult> {
     const limit = query.limit ?? 30
-    const fetchLimit = Math.min(1000, Math.max(limit, limit * 3))
-    const url = buildSearchUrl({ ...query, limit: fetchLimit })
-    log.info(`HF search: ${url}`)
-    const res = await fetch(url, { headers: this.headers() })
-    if (!res.ok) {
-      throw new Error(`Hugging Face search failed (${res.status})`)
+    // Enough beyond the page to make "N more" meaningful without paging the
+    // whole Hub for a filter that matches almost everything.
+    const wanted = limit * 2
+    const items: ModelSummary[] = []
+    const seen = new Set<string>()
+    let scanned = 0
+    let url: string | undefined = buildSearchUrl({ ...query, limit: pageSize(limit) })
+    let exhausted = false
+
+    for (let page = 0; page < MAX_PAGES && url; page++) {
+      log.info(`HF search: ${url}`)
+      const res: Response = await fetch(url, { headers: this.headers() })
+      if (!res.ok) throw new Error(`Hugging Face search failed (${res.status})`)
+
+      const rows = (await res.json()) as HfModel[]
+      scanned += rows.length
+      for (const row of rows) {
+        const summary = toSummary(row)
+        if (!summary.id || seen.has(summary.id)) continue
+        if (!matches(summary, query)) continue
+        seen.add(summary.id)
+        items.push(summary)
+      }
+
+      url = nextPageUrl(res.headers.get('link'))
+      if (!url) exhausted = true
+      if (items.length >= wanted) break
     }
-    let items = (await res.json()) as HfModel[]
-    if (query.quant) {
-      const q = query.quant.toLowerCase()
-      items = items.filter((m) => deriveQuant(m.id ?? m.modelId ?? '', m.tags)?.toLowerCase() === q)
-    }
-    let summaries = items.map(toSummary)
-    // Drop what mlx-lm can neither run nor convert (GGUF, or no safetensors).
-    if (query.hideGguf !== false) {
-      summaries = summaries.filter((m) => m.format !== 'unsupported')
-    }
-    return summaries
+
+    return { items, total: items.length, truncated: items.length > limit, scanned, exhausted }
   }
 
   /**
@@ -140,10 +187,28 @@ export class HuggingFaceService {
   }
 }
 
+/**
+ * Does this row satisfy the filters that cannot be expressed to the Hub?
+ *
+ * Scope, quantization and parameter size are all decided here, from the
+ * metadata the expanded search already returned — no second request per repo.
+ */
+function matches(m: ModelSummary, query: SearchQuery): boolean {
+  if (query.scope !== 'all' && m.format === 'unsupported') return false
+  if (query.quant && m.quant?.toLowerCase() !== query.quant.toLowerCase()) return false
+  if (!withinParams(m.paramsB, query.params)) return false
+  return true
+}
+
 function toSummary(m: HfModel): ModelSummary {
   const id = m.id ?? m.modelId ?? ''
   const tags = m.tags ?? []
   const quant = deriveQuant(id, tags)
+  // The Hub reports per-dtype element counts, so weight bytes are exact rather
+  // than inferred from "7B" in the name — including for the mixed-precision
+  // repos where a name-based guess is worst.
+  const exactBytes = bytesFromSafetensors(m.safetensors?.parameters)
+  const base = m.cardData?.base_model
   return {
     id,
     likes: m.likes ?? 0,
@@ -154,8 +219,13 @@ function toSummary(m: HfModel): ModelSummary {
     gated: Boolean(m.gated),
     quant,
     gguf: isGguf(id, tags),
-    format: classifyFormat(id, tags, m.library_name),
-    sizeBytes: estimateBytes(id, quant),
-    sizeExact: false,
+    // Present proves safetensors; absent proves nothing — the Hub omits the
+    // block for gated and unusual repos — so fall back to the tag rather than
+    // taking silence as a no.
+    format: classifyFormat(id, tags, m.library_name, m.safetensors ? true : undefined),
+    paramsB: effectiveParamsB(m.safetensors?.total, m.safetensors?.parameters, id, quant),
+    baseModel: Array.isArray(base) ? base[0] : base,
+    sizeBytes: exactBytes ?? estimateBytes(id, quant),
+    sizeExact: exactBytes !== undefined,
   }
 }

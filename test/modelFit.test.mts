@@ -105,3 +105,38 @@ test('isGguf detects llama.cpp-format repos', () => {
   assert.equal(isGguf('org/model', ['gguf']), true)
   assert.equal(isGguf('mlx-community/Qwen2.5-Coder-7B-Instruct-4bit', ['mlx']), false)
 })
+
+// ---- parameter counts for quantized repos ----------------------------------
+
+test('a quantized model is measured by its parameters, not its packed elements', async () => {
+  const { effectiveParamsB } = await import('../src/services/modelFit.ts')
+
+  // MLX packs eight 4-bit weights into one uint32, so the Hub reports 1.3B
+  // stored elements for an 8B model. Trusting that hides it from a 4-9B search.
+  const packed = { U32: 1_000_000_000, F16: 300_000_000 }
+  assert.equal(
+    effectiveParamsB(1_300_000_000, packed, 'lmstudio-community/DeepSeek-R1-Qwen3-8B-MLX-4bit', '4bit'),
+    8,
+  )
+
+  // Unquantized: the metadata is the parameter count, and is preferred over
+  // whatever the name claims.
+  assert.equal(effectiveParamsB(8_190_735_360, { BF16: 8_190_735_360 }, 'Qwen/Qwen3-8B'), 8.19073536)
+
+  // Packed with no size in the name: recovered from the weight bytes.
+  const recovered = effectiveParamsB(1_000_000_000, { U32: 1_000_000_000 }, 'org/mystery-4bit', '4bit')
+  assert.ok(recovered && recovered > 7 && recovered < 9, `got ${recovered}`)
+
+  assert.equal(effectiveParamsB(undefined, undefined, 'org/nothing'), undefined)
+})
+
+test('a size filter never drops a model whose size is unknown', async () => {
+  const { withinParams } = await import('../src/services/modelFit.ts')
+  assert.equal(withinParams(undefined, { minB: 4, maxB: 9 }), true, 'unknown is kept')
+  assert.equal(withinParams(7, { minB: 4, maxB: 9 }), true)
+  assert.equal(withinParams(3.9, { minB: 4, maxB: 9 }), false)
+  assert.equal(withinParams(9.1, { minB: 4, maxB: 9 }), false)
+  assert.equal(withinParams(700, undefined), true, 'no filter keeps everything')
+  assert.equal(withinParams(0.5, { maxB: 1 }), true)
+  assert.equal(withinParams(120, { minB: 80 }), true)
+})

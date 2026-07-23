@@ -26,6 +26,10 @@ export interface ModelSummary {
   /** GGUF repos cannot be run by mlx-lm (llama.cpp format). */
   gguf?: boolean
   format?: ModelFormat
+  /** Parameter count in billions, exact when the Hub reports safetensors metadata. */
+  paramsB?: number
+  /** The source repo a quantization was made from, when the Hub records one. */
+  baseModel?: string
 }
 
 export interface SearchResult {
@@ -33,6 +37,10 @@ export interface SearchResult {
   /** Matches after filtering, before the display limit is applied. */
   total: number
   truncated: boolean
+  /** How many Hub entries were examined to find them. */
+  scanned: number
+  /** True when the search reached the end of the Hub's results. */
+  exhausted: boolean
 }
 
 export interface MachineProfile {
@@ -44,17 +52,32 @@ export interface MachineProfile {
 
 export type SortKey = 'downloads' | 'likes' | 'lastModified' | 'trending'
 
+/**
+ * How much of the Hub to look at.
+ *
+ *  - `mlx`         only repos already in MLX format — run them as they are
+ *  - `convertible` those, plus anything with safetensors, which can be converted
+ *  - `all`         everything, GGUF included, which mlx-lm can neither run nor convert
+ */
+export type SearchScope = 'mlx' | 'convertible' | 'all'
+
+/** A parameter-count window, in billions. Both ends optional. */
+export interface ParamRange {
+  minB?: number
+  maxB?: number
+}
+
 export interface SearchQuery {
   text: string
-  libraryMlx: boolean
+  scope: SearchScope
   mlxCommunity: boolean
   quant?: string
   sort: SortKey
   limit: number
   /** Hide models whose estimated footprint exceeds the machine's memory budget. */
   onlyFits?: boolean
-  /** Hide GGUF repos (default true — mlx-lm cannot run them). */
-  hideGguf?: boolean
+  /** Parameter count window, from the Hub's own safetensors metadata. */
+  params?: ParamRange
 }
 
 export interface LocalModel {

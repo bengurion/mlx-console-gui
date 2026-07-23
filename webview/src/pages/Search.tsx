@@ -5,6 +5,7 @@ import type {
   ConvertItem,
   ConvertPlan,
   ConvertState,
+  SearchScope,
   DownloadItem,
   DownloadState,
   FitVerdict,
@@ -16,6 +17,30 @@ import type {
 } from '../../../src/shared/protocol'
 
 const QUANTS = ['', '4bit', '8bit', '6bit', 'bf16']
+
+const SCOPES: { key: SearchScope; label: string; hint: string }[] = [
+  { key: 'mlx', label: 'MLX-ready', hint: 'Already MLX — download and run' },
+  { key: 'convertible', label: 'MLX + convertible', hint: 'Adds safetensors models you can convert' },
+  { key: 'all', label: 'Everything', hint: 'Includes GGUF, which mlx-lm cannot run or convert' },
+]
+
+/**
+ * Parameter-count buckets.
+ *
+ * Sizes come from the Hub's own safetensors metadata, so these are exact
+ * rather than parsed out of "7B" in a repo name — which is why 4x7B mixtures
+ * and mislabelled repos land in the right bucket.
+ */
+const SIZES: { label: string; minB?: number; maxB?: number }[] = [
+  { label: 'Any size' },
+  { label: 'Under 1B', maxB: 1 },
+  { label: '1 – 4B', minB: 1, maxB: 4 },
+  { label: '4 – 9B', minB: 4, maxB: 9 },
+  { label: '9 – 20B', minB: 9, maxB: 20 },
+  { label: '20 – 40B', minB: 20, maxB: 40 },
+  { label: '40 – 80B', minB: 40, maxB: 80 },
+  { label: '80B and up', minB: 80 },
+]
 const SORTS: { key: SortKey; label: string }[] = [
   { key: 'downloads', label: 'Downloads' },
   { key: 'likes', label: 'Likes' },
@@ -37,8 +62,6 @@ const FIT_COLOR: Record<FitVerdict, string> = {
   unknown: 'var(--vscode-descriptionForeground)',
 }
 
-type SizeInfo = { bytes: number; fit: FitVerdict }
-
 /** Colour for the finer-grained verdicts a conversion plan reports. */
 const PLAN_COLOR: Record<string, string> = {
   ...FIT_COLOR,
@@ -48,17 +71,19 @@ const PLAN_COLOR: Record<string, string> = {
 export function SearchPage() {
   const [query, setQuery] = useState<SearchQuery>({
     text: '',
-    libraryMlx: true,
+    // Convertible by default: the Hub has far more safetensors models than MLX
+    // ones, and converting is a button now.
+    scope: 'convertible',
     mlxCommunity: false,
     sort: 'downloads',
     limit: 50,
     onlyFits: false,
-    hideGguf: true,
   })
   const [results, setResults] = useState<ModelSummary[]>([])
   const [total, setTotal] = useState(0)
   const [truncated, setTruncated] = useState(false)
-  const [sizes, setSizes] = useState<Record<string, SizeInfo>>({})
+  const [scanned, setScanned] = useState(0)
+  const [exhausted, setExhausted] = useState(true)
   const [machine, setMachine] = useState<MachineProfile>()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>()
@@ -97,13 +122,10 @@ export function SearchPage() {
       setResults(found.items)
       setTotal(found.total)
       setTruncated(found.truncated)
-      // Refine the heuristic sizes with exact dtype-derived byte counts.
-      const repos = found.items.map((m) => m.id)
-      if (repos.length) {
-        void rpc<Record<string, SizeInfo>>('getModelSizes', { repos })
-          .then((exact) => setSizes((prev) => ({ ...prev, ...exact })))
-          .catch(() => undefined)
-      }
+      setScanned(found.scanned)
+      setExhausted(found.exhausted)
+      // Sizes arrive with the search now — the expanded Hub query carries the
+      // safetensors metadata, so the second round of per-repo requests is gone.
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -118,9 +140,7 @@ export function SearchPage() {
 
   const patch = (p: Partial<SearchQuery>) => setQuery((q) => ({ ...q, ...p }))
 
-  const visible = query.onlyFits
-    ? results.filter((m) => (sizes[m.id]?.fit ?? m.fit) !== 'too-large')
-    : results
+  const visible = query.onlyFits ? results.filter((m) => m.fit !== 'too-large') : results
   const mlxCount = visible.filter((m) => m.format === 'mlx').length
   const convCount = visible.filter((m) => m.format === 'convertible').length
 
@@ -134,14 +154,6 @@ export function SearchPage() {
         onKeyDown={(e) => e.key === 'Enter' && doSearch(query)}
       />
       <div className="row wrap small">
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={query.libraryMlx}
-            onChange={(e) => patch({ libraryMlx: e.target.checked })}
-          />
-          MLX only
-        </label>
         <label className="check">
           <input
             type="checkbox"
@@ -159,7 +171,33 @@ export function SearchPage() {
           Fits my machine
         </label>
       </div>
-      <div className="row">
+      <div className="row wrap">
+        <select
+          value={query.scope}
+          title={SCOPES.find((sc) => sc.key === query.scope)?.hint}
+          onChange={(e) => patch({ scope: e.target.value as SearchScope })}
+        >
+          {SCOPES.map((sc) => (
+            <option key={sc.key} value={sc.key} title={sc.hint}>
+              {sc.label}
+            </option>
+          ))}
+        </select>
+        <select
+          value={SIZES.findIndex(
+            (b) => b.minB === query.params?.minB && b.maxB === query.params?.maxB,
+          )}
+          onChange={(e) => {
+            const b = SIZES[Number(e.target.value)] ?? SIZES[0]
+            patch({ params: b.minB === undefined && b.maxB === undefined ? undefined : { minB: b.minB, maxB: b.maxB } })
+          }}
+        >
+          {SIZES.map((b, i) => (
+            <option key={b.label} value={i}>
+              {b.label}
+            </option>
+          ))}
+        </select>
         <select
           value={query.quant ?? ''}
           onChange={(e) => patch({ quant: e.target.value || undefined })}
@@ -193,10 +231,14 @@ export function SearchPage() {
 
       {!loading && !error && total > 0 && (
         <div className="small muted">
-          Showing {visible.length} of {total} — {mlxCount} MLX-ready
-          {convCount > 0 && `, ${convCount} convertible`}.
-          {query.libraryMlx &&
-            ' Uncheck “MLX only” to include safetensors models you can convert.'}
+          Showing {Math.min(visible.length, query.limit)} of {total} — {mlxCount} MLX-ready
+          {convCount > 0 && `, ${convCount} convertible`}.{' '}
+          {/* What was searched, not just what matched: "12 results" out of 200
+              examined and out of the whole Hub mean very different things. */}
+          {exhausted
+            ? `That is every match in ${scanned.toLocaleString()} entries.`
+            : `Found in the first ${scanned.toLocaleString()} entries — narrow the search for more.`}
+          {query.scope === 'mlx' && ' Switch to “MLX + convertible” to include models you can convert.'}
         </div>
       )}
 
@@ -206,8 +248,11 @@ export function SearchPage() {
           {query.mlxCommunity && (
             <div className="small">Try unchecking “mlx-community” — it limits results to one author.</div>
           )}
-          {query.libraryMlx && !query.mlxCommunity && (
-            <div className="small">Try unchecking “MLX only” to include other formats.</div>
+          {query.scope === 'mlx' && !query.mlxCommunity && (
+            <div className="small">Try “MLX + convertible” — far more of the Hub ships safetensors than MLX.</div>
+          )}
+          {query.params && (
+            <div className="small">The size filter is exact; try a wider band.</div>
           )}
         </div>
       )}
@@ -217,7 +262,6 @@ export function SearchPage() {
           <ResultCard
             key={m.id}
             model={m}
-            exact={sizes[m.id]}
             state={dl[m.id]}
             convertState={conv[m.id]}
           />
@@ -242,12 +286,10 @@ export function SearchPage() {
 
 function ResultCard({
   model,
-  exact,
   state,
   convertState,
 }: {
   model: ModelSummary
-  exact?: SizeInfo
   state?: DownloadState
   convertState?: ConvertState
 }) {
@@ -256,8 +298,8 @@ function ResultCard({
   // opens inside the card now, so both hosts get the same flow.
   const [plan, setPlan] = useState<ConvertPlan>()
   const [planError, setPlanError] = useState<string>()
-  const sizeBytes = exact?.bytes ?? model.sizeBytes
-  const fit: FitVerdict = exact?.fit ?? model.fit ?? 'unknown'
+  const sizeBytes = model.sizeBytes
+  const fit: FitVerdict = model.fit ?? 'unknown'
   const label =
     state === 'downloading'
       ? 'Downloading…'
@@ -288,11 +330,22 @@ function ResultCard({
         <span>⬇ {count(model.downloads)}</span>
         <span>♥ {count(model.likes)}</span>
         {sizeBytes ? (
-          <span title={exact ? 'Exact size from model metadata' : 'Estimated from parameter count'}>
+          <span
+            title={
+              model.sizeExact
+                ? 'Exact, from the model’s safetensors metadata'
+                : 'Estimated from the parameter count in the repo name'
+            }
+          >
             {bytes(sizeBytes)}
-            {exact ? '' : '≈'}
+            {model.sizeExact ? '' : '≈'}
           </span>
         ) : null}
+        {model.paramsB != null && (
+          <span title="Parameters, from the Hub’s safetensors metadata (experts included)">
+            {model.paramsB >= 1 ? `${model.paramsB.toFixed(model.paramsB < 10 ? 1 : 0)}B` : `${Math.round(model.paramsB * 1000)}M`} params
+          </span>
+        )}
         {model.updatedAt && <span>{relativeDate(model.updatedAt)}</span>}
         {model.gated && <span className="badge">gated</span>}
       </div>
@@ -309,8 +362,13 @@ function ResultCard({
       {format === 'unsupported' && (
         <div className="small" style={{ color: 'var(--vscode-editorWarning-foreground)' }}>
           {model.gguf
-            ? 'GGUF — mlx-lm cannot run or convert this. Look for an MLX or safetensors build.'
+            ? 'GGUF — mlx-lm cannot run or convert this.'
             : 'No safetensors — mlx-lm cannot load or convert this repo.'}
+          {/* The Hub records what a quantization was made from, so a dead end
+              can point at the source that is not one. */}
+          {model.baseModel
+            ? ` Its source is ${model.baseModel}.`
+            : ' Look for an MLX or safetensors build.'}
         </div>
       )}
 
@@ -333,6 +391,7 @@ function ResultCard({
       {plan && (
         <div className="col" style={{ gap: 4 }}>
           <div className="small muted">
+            {plan.repo !== model.id && <strong>{plan.repo}</strong>}{' '}
             {plan.paramsB
               ? `~${plan.paramsB}B parameters · ${bytes(plan.budgetBytes)} usable of ${bytes(plan.totalBytes)}`
               : 'The repo id does not say how big this model is — sizes below are unknown, not zero.'}
@@ -350,7 +409,9 @@ function ResultCard({
               onClick={() => {
                 setPlan(undefined)
                 void rpc<{ ok: boolean; error?: string }>('convertModel', {
-                  repo: model.id,
+                  // plan.repo, not model.id: for a GGUF card the plan is for
+                  // the source model, which is what actually converts.
+                  repo: plan.repo,
                   bits: o.bits,
                 }).then((r) => !r.ok && setPlanError(r.error))
               }}
@@ -398,9 +459,22 @@ function ResultCard({
                   : 'Convert to MLX…'}
           </button>
         )}
-        {format === 'unsupported' && (
-          <button disabled>Unsupported</button>
-        )}
+        {format === 'unsupported' &&
+          (model.baseModel ? (
+            <button
+              title={`Convert ${model.baseModel}, the safetensors model this was quantized from`}
+              onClick={() => {
+                setPlanError(undefined)
+                void rpc<ConvertPlan>('getConvertPlan', { repo: model.baseModel })
+                  .then(setPlan)
+                  .catch((e: Error) => setPlanError(e.message))
+              }}
+            >
+              Convert the source instead…
+            </button>
+          ) : (
+            <button disabled>Unsupported</button>
+          ))}
       </div>
     </div>
   )

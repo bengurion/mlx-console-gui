@@ -184,12 +184,81 @@ export function classifyFormat(
   id: string,
   tags: string[] = [],
   libraryName?: string,
+  /**
+   * True when the Hub reports a `safetensors` block for the repo — a fact
+   * about the files, unlike the tag, which is merely usually present. Pass it
+   * where it is known; the tag remains the fallback.
+   */
+  hasSafetensors?: boolean,
 ): ModelFormat {
   const lower = tags.map((t) => t.toLowerCase())
   if (libraryName?.toLowerCase() === 'mlx' || lower.includes('mlx')) return 'mlx'
   if (isGguf(id, tags)) return 'unsupported'
-  if (lower.includes('safetensors')) return 'convertible'
+  if (hasSafetensors ?? lower.includes('safetensors')) return 'convertible'
   return 'unsupported'
+}
+
+/**
+ * Parameter count in billions, from the Hub's safetensors metadata.
+ *
+ * `total` counts every parameter, experts included — a 35B-A3B mixture reports
+ * 35.9B, not 3B — which is right for both filtering and memory, since all of
+ * them have to be resident.
+ */
+export function paramsBFromSafetensors(total: number | undefined): number | undefined {
+  if (!total || !Number.isFinite(total) || total <= 0) return undefined
+  return total / 1e9
+}
+
+/** Integer dtypes: their presence means weights are packed, not stored per parameter. */
+const PACKED_DTYPES = new Set(['U32', 'I32', 'U16', 'I16', 'U8', 'I8'])
+
+/**
+ * How many parameters a model really has.
+ *
+ * The Hub's `safetensors.total` counts stored *elements*, which for a
+ * quantized model is not the parameter count: MLX packs eight 4-bit weights
+ * into one uint32, so an 8B model at 4-bit reports 1.3B. Filtering on that
+ * puts an 8B model in the "under 2B" bucket and hides it from a 4–9B search —
+ * exactly the model someone with limited memory is looking for.
+ *
+ * So a packed repo is measured by its name, which for quantized builds is
+ * reliable (they are named after the model they quantize), and by the stored
+ * bytes only as a fallback.
+ */
+export function effectiveParamsB(
+  total: number | undefined,
+  parameters: Record<string, number> | undefined,
+  id: string,
+  quant?: string,
+): number | undefined {
+  const dtypes = Object.keys(parameters ?? {}).map((d) => d.toUpperCase())
+  const packed = dtypes.some((d) => PACKED_DTYPES.has(d))
+  if (!packed && !quant) return paramsBFromSafetensors(total)
+
+  const named = parseParamsB(id)
+  if (named !== undefined) return named
+
+  // No size in the name either: recover it from the weight bytes, which is
+  // what the quantization was applied to.
+  const bytes = bytesFromSafetensors(parameters)
+  const per = bytesPerParam(quant)
+  if (bytes && per > 0) return bytes / per / 1e9
+  return paramsBFromSafetensors(total)
+}
+
+/** Whether a parameter count falls inside a requested window. */
+export function withinParams(
+  paramsB: number | undefined,
+  range: { minB?: number; maxB?: number } | undefined,
+): boolean {
+  if (!range || (range.minB === undefined && range.maxB === undefined)) return true
+  // An unknown size is never excluded by a size filter: silently dropping
+  // everything the Hub has no metadata for is how results go missing.
+  if (paramsB === undefined) return true
+  if (range.minB !== undefined && paramsB < range.minB) return false
+  if (range.maxB !== undefined && paramsB > range.maxB) return false
+  return true
 }
 
 /** Bit widths `mlx_lm.convert --q-bits` accepts, highest quality first. */

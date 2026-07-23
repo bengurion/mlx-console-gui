@@ -531,16 +531,18 @@ export class WebviewHub {
       case 'search': {
         const query = params as SearchQuery
         const budget = this.machine().budgetBytes
-        let results = (await this.deps.hf.search(query)).map((m) => ({
-          ...m,
-          fit: fitVerdict(m.sizeBytes, budget),
-        }))
+        const found = await this.deps.hf.search(query)
+        // Fit is the one filter the service cannot apply: it depends on this
+        // machine's memory, which is the host's knowledge, not the Hub's.
+        let results = found.items.map((m) => ({ ...m, fit: fitVerdict(m.sizeBytes, budget) }))
         if (query.onlyFits) results = results.filter((m) => m.fit !== 'too-large')
         const limit = query.limit ?? 30
         return {
           items: results.slice(0, limit),
           total: results.length,
           truncated: results.length > limit,
+          scanned: found.scanned,
+          exhausted: found.exhausted,
         }
       }
       case 'getMachine':
