@@ -13,12 +13,12 @@ another for `huggingface-cli`, a browser tab open on the Hub trying to work out 
 
 ---
 
-## Two packages, one system
+## One system, three front ends
 
-The same core ships two ways — plus the **desktop app**, which wraps the headless daemon in
-a Chromium window and is the primary way to run MLX Console (see [Install](#install)). Pick
-any, or run several — they cooperate rather than compete: whichever starts the server, the
-others adopt it.
+The same core ships three ways: the **desktop app** (wraps the headless daemon in a Chromium
+window — the primary way to run MLX Console, see [Install](#install)), the **VS Code
+extension**, and the **CLI**. Pick any, or run several — they cooperate rather than compete:
+whichever starts the server, the others adopt it.
 
 | | **VS Code extension** (`.vsix`) | **Headless daemon** (`mlx-console`) |
 | --- | --- | --- |
@@ -37,7 +37,8 @@ others adopt it.
 
 ```mermaid
 flowchart TB
-    subgraph hosts["Two front ends"]
+    subgraph hosts["Three front ends"]
+        APP["Desktop app<br/><i>owns the runtime · install root</i>"]
         VSC["VS Code extension<br/><i>panels · chat provider</i>"]
         CLI["mlx-console CLI<br/><i>terminal · launchd</i>"]
     end
@@ -47,11 +48,13 @@ flowchart TB
     SRV["mlx_lm.server<br/><i>detached process</i>"]
     GPU["Unified memory<br/><i>weights + KV cache</i>"]
 
-    VSC -->|serves| DASH
+    APP -->|serves| DASH
     CLI -->|serves| DASH
+    VSC -.->|"thin client of the app's daemon<br/>(embedded mode serves its own)"| DASH
+    APP <-->|"reads / writes"| REG
     VSC <-->|"reads / writes"| REG
     CLI <-->|"reads / writes"| REG
-    VSC -->|spawns · stops| SRV
+    APP -->|spawns · stops| SRV
     CLI -->|spawns · stops| SRV
     REG -.->|"which model is resident"| SRV
     SRV -->|wires| GPU
@@ -146,21 +149,24 @@ window, KV cost per token, weight size and vocabulary, read from the model's own
 `config.json`.
 
 **Measure what it costs the machine** — the **Dashboard** view, first in the list, for when
-utilisation is not the question. Device, CPU, memory and GPU figures live here, alongside the
-GPU ceiling editor and the per-process GPU sampler. It shows the unified-memory budget as one
-pool (model / other apps / headroom),
-swap and compressor pressure — the difference between a machine working hard and one being
-squeezed — what each context length would cost in KV cache against the headroom you actually
-have, and a three-minute trend. Per-process GPU attribution is one button away, via `sudo
-powermetrics` run in a terminal you can read.
+utilisation is not the question. It charts the last ten minutes live: memory held against
+the wired ceiling, GPU/CPU compute with a per-core strip, swap pressure, and a KV-cost curve
+whose headroom line crosses at the context length that actually fits right now. The verdict
+at the top reasons rather than reports — swap-outs must be sustained before they count, and
+a live regression over occupancy warns "ceiling in ~N min at this rate" before the swapping
+starts. A psutil-backed table names the processes actually holding the memory, the
+unified-memory budget shows one pool (model / other apps / headroom), and per-process GPU
+attribution is one authorisation away, via `sudo powermetrics` under a rule you can read.
 
 **Configure in place** — every setting is editable from the UI, with sizes in MB/GB rather
 than raw bytes. Values the model knows about itself — context window, sampling defaults, max
 output tokens — are read from its files, and anything you set explicitly always wins.
 
-**Use it in the editor, if you want** — served models appear in the VS Code model picker and
-as the `@mlx` chat participant, forwarding native and MCP tools. That is one client of the
-server, not the point of the project.
+**Use it in the editor, if you want** — every downloaded model appears in the VS Code chat
+model picker (one-time enable: model dropdown → **Manage Models…** → **MLX (local)**), and
+as the `@mlx` chat participant, forwarding native and MCP tools. Picking a model starts the
+server and loads it inside the first request. That is one client of the server, not the
+point of the project.
 
 ---
 
