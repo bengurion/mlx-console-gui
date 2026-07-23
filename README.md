@@ -226,7 +226,7 @@ the app bundle:
 
 ```bash
 "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" \
-  --install-extension mlx-console-gui-0.0.17.vsix --force
+  --install-extension mlx-console-gui-0.0.18.vsix --force
 ```
 
 </details>

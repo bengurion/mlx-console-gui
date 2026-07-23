@@ -2,7 +2,7 @@
   "name": "mlx-console-gui",
   "displayName": "MLX Console GUI",
   "description": "Run and manage mlx-lm on Apple Silicon: download, convert and serve MLX models, watch GPU and memory use, and drive it from VS Code, a browser, or a headless daemon.",
-  "version": "0.0.17",
+  "version": "0.0.18",
   "publisher": "mlx-console",
   "author": {
     "name": "bengurion",
@@ -253,7 +253,7 @@
         "mlxConsole.daemonUrl": {
           "type": "string",
           "default": "",
-          "description": "Explicit URL of a running MLX Console daemon (e.g. http://127.0.0.1:8090/?t=\u2026). Leave empty to discover it automatically."
+          "description": "Explicit URL of a running MLX Console daemon (e.g. http://127.0.0.1:8090/?t=…). Leave empty to discover it automatically."
         },
         "mlxConsole.pythonPath": {
           "type": "string",
@@ -298,12 +298,12 @@
         "mlxConsole.webUi.enabled": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Serve an editable dashboard on `http://127.0.0.1`. **Loopback only** \u2014 it ignores Expose to LAN and cannot be reached from another machine. Every request needs a per-session token, because any web page open in your browser can send requests to localhost. On by default; run **MLX: Open Web Dashboard (local)** to open it."
+          "markdownDescription": "Serve an editable dashboard on `http://127.0.0.1`. **Loopback only** — it ignores Expose to LAN and cannot be reached from another machine. Every request needs a per-session token, because any web page open in your browser can send requests to localhost. On by default; run **MLX: Open Web Dashboard (local)** to open it."
         },
         "mlxConsole.webUi.requireToken": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Require a per-session token in the dashboard URL. Off by default: the dashboard already refuses cross-site requests, which is what a malicious web page would have to make. Turn it on if other people have accounts on this Mac \u2014 a loopback port is reachable by every local user, and only the token keeps them out."
+          "markdownDescription": "Require a per-session token in the dashboard URL. Off by default: the dashboard already refuses cross-site requests, which is what a malicious web page would have to make. Turn it on if other people have accounts on this Mac — a loopback port is reachable by every local user, and only the token keeps them out."
         },
         "mlxConsole.webUi.port": {
           "type": "number",
@@ -346,12 +346,12 @@
         "mlxConsole.server.promptCacheBytes": {
           "type": "number",
           "default": 0,
-          "markdownDescription": "Maximum size of the KV/prompt caches (`mlx_lm.server --prompt-cache-bytes`). Accepts a size such as `8 GB` or `512 MB`; a bare number is read as MB. **Unbounded by default** \u2014 the server then trims only by entry count, so long conversations can grow into whatever the model leaves free. See the live recommendation in Metrics. 0 leaves the server default."
+          "markdownDescription": "Maximum size of the KV/prompt caches (`mlx_lm.server --prompt-cache-bytes`). Accepts a size such as `8 GB` or `512 MB`; a bare number is read as MB. **Unbounded by default** — the server then trims only by entry count, so long conversations can grow into whatever the model leaves free. See the live recommendation in Metrics. 0 leaves the server default."
         },
         "mlxConsole.server.decodeConcurrency": {
           "type": "number",
           "default": 0,
-          "markdownDescription": "Sequences decoded in parallel (`mlx_lm.server --decode-concurrency`). **Each parallel sequence holds its own KV cache**, so this multiplies memory: at a 131072-token window and ~72 KiB/token, one sequence is ~9.7 GB. The server default is **32**, sized for a shared inference host \u2014 a single-user editor rarely needs more than 1\u20134. 0 leaves the server default."
+          "markdownDescription": "Sequences decoded in parallel (`mlx_lm.server --decode-concurrency`). **Each parallel sequence holds its own KV cache**, so this multiplies memory: at a 131072-token window and ~72 KiB/token, one sequence is ~9.7 GB. The server default is **32**, sized for a shared inference host — a single-user editor rarely needs more than 1–4. 0 leaves the server default."
         },
         "mlxConsole.server.promptConcurrency": {
           "type": "number",
@@ -366,7 +366,7 @@
         "mlxConsole.server.draftModel": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Small model used for speculative decoding (`mlx_lm.server --draft-model`). Loaded **in addition** to the main model, so its weights count against the same GPU ceiling \u2014 check headroom in Metrics first. Empty disables speculation."
+          "markdownDescription": "Small model used for speculative decoding (`mlx_lm.server --draft-model`). Loaded **in addition** to the main model, so its weights count against the same GPU ceiling — check headroom in Metrics first. Empty disables speculation."
         },
         "mlxConsole.server.numDraftTokens": {
           "type": "number",
@@ -376,7 +376,7 @@
         "mlxConsole.contextWindow": {
           "type": "number",
           "default": 131072,
-          "markdownDescription": "Context window advertised to VS Code for MLX models (`maxInputTokens`). **Leave unset to read each model's real window from its own `config.json`** (`max_position_embeddings`); setting a value here overrides that for every model. VS Code uses this to decide how much history **and how many tool definitions** to send in agent mode \u2014 a large native + MCP tool set can need 32k on its own."
+          "markdownDescription": "Context window advertised to VS Code for MLX models (`maxInputTokens`). **Leave unset to read each model's real window from its own `config.json`** (`max_position_embeddings`); setting a value here overrides that for every model. VS Code uses this to decide how much history **and how many tool definitions** to send in agent mode — a large native + MCP tool set can need 32k on its own."
         },
         "mlxConsole.maxOutputTokens": {
           "type": "number",
