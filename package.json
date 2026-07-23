@@ -8,7 +8,7 @@
     "name": "bengurion",
     "url": "https://github.com/bengurion"
   },
-  "license": "MIT",
+  "license": "Elastic-2.0",
   "icon": "resources/icon.png",
   "engines": {
     "vscode": "^1.125.0",

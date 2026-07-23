@@ -582,7 +582,10 @@ Apple or Hugging Face.
 
 ## License
 
-MIT. The full text is in the `LICENSE` file at the repository root.
+[Elastic License 2.0](https://www.elastic.co/licensing/elastic-license) — free to use, copy,
+modify and redistribute; what you may not do is offer MLX Console to others as a hosted or
+managed service, or strip the licensing from it. The full text is in the `LICENSE` file at
+the repository root.
 
 ---
 
