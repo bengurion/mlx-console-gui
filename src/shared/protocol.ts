@@ -357,7 +357,8 @@ export type RpcMethod =
 
 /** webview → host */
 export type HostBound =
-  | { type: 'ready'; view: ViewId }
+  /** `build` is the id stamped into the page bundle; see the `stale` push. */
+  | { type: 'ready'; view: ViewId; build?: string }
   | { type: 'rpc'; id: number; method: RpcMethod; params?: unknown }
   | { type: 'openExternal'; url: string }
   | { type: 'copy'; text: string }
@@ -377,3 +378,13 @@ export type WebviewBound =
   | { type: 'push'; name: 'processGpu'; data: ProcessGpuPush }
   /** Reveal one setting in the settings view, wherever that view lives. */
   | { type: 'push'; name: 'revealSetting'; data: { short: string } }
+  /**
+   * The page and the host came from different builds.
+   *
+   * The dashboard reads its bundle from disk per request while the host is
+   * whatever was loaded at startup, so rebuilding without restarting leaves a
+   * new UI talking to an old host. Nothing errors — the old host simply
+   * ignores fields it has never heard of, so a filter silently does nothing.
+   * Better to say so.
+   */
+  | { type: 'push'; name: 'stale'; data: { host: string; client: string } }

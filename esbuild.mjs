@@ -4,6 +4,19 @@ import { existsSync } from 'node:fs'
 const production = process.argv.includes('--production')
 const watch = process.argv.includes('--watch')
 
+/**
+ * One id shared by every bundle in this build.
+ *
+ * The dashboard serves its page from disk on each request, but the host that
+ * answers its calls was loaded into memory when the process started. Rebuild
+ * without restarting and the browser gets a new UI talking to an old host —
+ * which does not fail, it silently ignores anything the old host has never
+ * heard of. Stamping both sides lets the mismatch be detected and said out
+ * loud.
+ */
+const BUILD_ID = JSON.stringify(new Date().toISOString())
+const define = { __BUILD_ID__: BUILD_ID }
+
 /** @type {import('esbuild').BuildOptions} */
 const extensionConfig = {
   entryPoints: ['src/extension.ts'],
@@ -15,6 +28,7 @@ const extensionConfig = {
   external: ['vscode'],
   sourcemap: !production,
   minify: production,
+  define,
   logLevel: 'info',
 }
 
@@ -33,6 +47,7 @@ const cliConfig = {
   sourcemap: !production,
   minify: production,
   banner: { js: '#!/usr/bin/env node' },
+  define,
   logLevel: 'info',
 }
 
@@ -48,7 +63,7 @@ const webviewConfig = {
   sourcemap: !production,
   minify: production,
   loader: { '.css': 'css' },
-  define: { 'process.env.NODE_ENV': production ? '"production"' : '"development"' },
+  define: { ...define, 'process.env.NODE_ENV': production ? '"production"' : '"development"' },
   logLevel: 'info',
 }
 

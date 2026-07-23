@@ -9,6 +9,7 @@ const PROCESS_GPU_INTERVAL_MS = 20_000
 import type { Disposable } from '../../core/events'
 import { Config } from '../../config'
 import { fitVerdict } from '../../services/modelFit'
+import { staleNotice } from './buildStamp'
 import type { EnvironmentManager } from '../../backend/environmentManager'
 import type { ServerManager } from '../../backend/serverManager'
 import type { HuggingFaceService } from '../../services/huggingFaceService'
@@ -40,6 +41,7 @@ import type {
 } from '../../shared/protocol'
 
 const FALLBACK_MODEL = 'mlx-community/Qwen2.5-Coder-7B-Instruct-4bit'
+
 
 export interface HubDeps {
   env: EnvironmentManager
@@ -495,6 +497,12 @@ export class WebviewHub {
     const m = raw as HostBound
     switch (m.type) {
       case 'ready':
+        // A page from a different build than this process may send fields this
+        // host has never heard of, which it would drop without complaint.
+        {
+          const stale = staleNotice(m.build)
+          if (stale) void webview.postMessage({ type: 'push', name: 'stale', data: stale })
+        }
         await this.sendInitial(webview)
         break
       case 'openExternal':

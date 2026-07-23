@@ -211,3 +211,22 @@ test('without a panel bundle the dashboard still serves its compact page', async
     { withApp: false },
   )
 })
+
+// ---- build skew ------------------------------------------------------------
+
+test('a page from another build is told to reload', async () => {
+  const { staleNotice } = await import('../src/ui/webview/buildStamp.ts')
+
+  // The case that prompted this: a rebuilt page served from disk to a host
+  // still running the previous build. It does not error — the old host drops
+  // the fields it does not know, so a size filter quietly matches everything.
+  assert.deepEqual(staleNotice('2026-07-23T14:42:00Z', '2026-07-23T09:58:00Z'), {
+    host: '2026-07-23T09:58:00Z',
+    client: '2026-07-23T14:42:00Z',
+  })
+
+  assert.equal(staleNotice('same', 'same'), undefined, 'matching builds say nothing')
+  // A page old enough to send no build at all cannot be compared, and a
+  // warning nobody can act on is worse than none.
+  assert.equal(staleNotice(undefined, 'x'), undefined)
+})

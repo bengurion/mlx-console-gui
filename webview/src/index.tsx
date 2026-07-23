@@ -1,6 +1,6 @@
 import { StrictMode, type ComponentType } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { ready } from './api'
+import { onPush, ready } from './api'
 import { SearchPage } from './pages/Search'
 import { ModelsPage } from './pages/Models'
 import { DownloadsPage } from './pages/Downloads'
@@ -61,7 +61,31 @@ function show(view: ViewId): void {
   ready(view)
 }
 
+/**
+ * Say when the page and the host disagree about which build they are.
+ *
+ * A stale host does not reject a newer page — it drops whatever it does not
+ * recognise, so filters quietly stop filtering and nothing looks broken. A
+ * banner is the only way anyone would know to reload.
+ */
+function warnIfStale(): void {
+  onPush<{ host: string; client: string }>('stale', ({ host, client }) => {
+    if (document.getElementById('mlx-stale')) return
+    const bar = document.createElement('div')
+    bar.id = 'mlx-stale'
+    bar.className = 'card small'
+    bar.style.cssText =
+      'border-left:3px solid var(--vscode-editorWarning-foreground,#d29922);margin-bottom:8px'
+    bar.textContent =
+      'This page was built after the running host started, so some options may do nothing. ' +
+      'Reload the window (VS Code) or restart `mlx-console serve`.'
+    bar.title = `page ${client} · host ${host}`
+    container?.prepend(bar)
+  })
+}
+
 if (container) {
   window.__MLX_SHOW__ = show
+  warnIfStale()
   show(window.__MLX_VIEW__ ?? 'dashboard')
 }

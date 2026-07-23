@@ -52,8 +52,12 @@ export function onPush<T = unknown>(name: PushName, handler: (data: T) => void):
   }
 }
 
+/** Build id stamped in by esbuild; `dev` when the bundle was not built by it. */
+declare const __BUILD_ID__: string | undefined
+export const BUILD = typeof __BUILD_ID__ === 'string' ? __BUILD_ID__ : 'dev'
+
 export function ready(view: ViewId) {
-  post({ type: 'ready', view })
+  post({ type: 'ready', view, build: BUILD })
 }
 export function openExternal(url: string) {
   post({ type: 'openExternal', url })
