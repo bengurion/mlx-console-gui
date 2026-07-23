@@ -15,7 +15,10 @@ another for `huggingface-cli`, a browser tab open on the Hub trying to work out 
 
 ## Two packages, one system
 
-The same core ships two ways. Pick either, or run both — they cooperate rather than compete.
+The same core ships two ways — plus the **desktop app**, which wraps the headless daemon in
+a Chromium window and is the primary way to run MLX Console (see [Install](#install)). Pick
+any, or run several — they cooperate rather than compete: whichever starts the server, the
+others adopt it.
 
 | | **VS Code extension** (`.vsix`) | **Headless daemon** (`mlx-console`) |
 | --- | --- | --- |
@@ -163,20 +166,56 @@ server, not the point of the project.
 
 ## Install
 
-### The extension
+### The desktop app (primary)
 
-No marketplace release yet — coming soon. Until then, build it from source:
+The Chromium-packaged desktop app owns the runtime: on first launch it asks
+where to install, then builds everything — Python venv, mlx-lm, model cache,
+config, logs — under that one folder. The VS Code extension and the CLI find
+it through `~/.mlx-console/app.json` and become clients of the same daemon.
+
+```bash
+npm install
+npm run app:dev        # run the app from source
+npm run app:package    # build release/MLX Console-<version>-arm64.dmg (unsigned)
+```
+
+These dev builds are unsigned, so a downloaded DMG is quarantined by
+Gatekeeper. Either right-click the app → Open (twice, the first time), or:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/MLX Console.app"
+```
+
+Locally built (not downloaded) apps carry no quarantine flag and open
+normally. Closing the window leaves the daemon serving the dashboard and the
+extension; ⌘Q stops the model servers too (set `app.keepServerOnQuit` in the
+install root's `config.json` to leave them running).
+
+### The VS Code extension
+
+No marketplace release yet — coming soon. Until then, build the `.vsix` from source:
 
 ```bash
 git clone <this-repo>
 cd mlx_console_gui
 npm install
-npm run vsce:package
+npm run vsce:package    # README sync + production esbuild + vsce package
 code --install-extension "$(ls -t mlx-console-gui-*.vsix | head -1)" --force
 ```
 
-Reload the window afterwards, then open the **MLX Console** icon in the activity bar. First
-run offers to set up the Python environment for you.
+Reload the window afterwards, then open the **MLX Console** icon in the activity bar.
+
+How it behaves depends on whether the desktop app is installed (`mlxConsole.mode`,
+default `auto`):
+
+- **App onboarded** (its install-root pointer exists) → the extension runs as a **thin
+  client**: the panels talk to the app's daemon, and the app owns the venv, models and
+  servers. Nothing to set up in the editor.
+- **No app** → classic embedded mode, exactly as before: first run offers to set up the
+  Python environment inside the extension.
+
+Set `mlxConsole.mode` to `remote` or `embedded` to force either; `mlxConsole.daemonUrl`
+points at a daemon that discovery would not find on its own.
 
 <details>
 <summary>If <code>code</code> is not on your PATH</summary>
@@ -420,9 +459,11 @@ The complete list is at the end: **[Settings reference](#settings-reference)**.
 
 ```bash
 npm install
-npm run watch        # or: npm run compile — builds the extension, the CLI and the webview
+npm run watch        # or: npm run compile — builds the extension, the CLI, the webview
+                     # and the Electron main/preload bundles
 npm run typecheck
-npm test             # 141 unit tests, no VS Code host required
+npm test             # 233 unit tests, no VS Code host required
+npm run app:dev      # compile + launch the desktop app from source
 ```
 
 Press `F5` to launch an Extension Development Host.
@@ -456,6 +497,46 @@ Each of these cost real time, so they are written down:
 - **Reload the window** after installing; VS Code keeps the old extension host running.
 - **Pin `@types/vscode` to the `engines.vscode` floor.** A caret range once resolved to a much
   newer version, so the compiler happily accepted APIs the manifest did not guarantee.
+
+</details>
+
+<details>
+<summary><b>Building the desktop app (Electron)</b></summary>
+
+The app is the same daemon the CLI runs — `createDaemon()` in `src/headless/daemon.ts` —
+wrapped in a Chromium window pointed at the dashboard it serves. `src/electron/main.ts` is
+the only Electron-specific code; everything else is shared.
+
+```bash
+npm run app:dev        # compile all bundles, then launch Electron from source
+npm run app:package    # production esbuild + electron-builder
+                       # → release/MLX Console-<version>-arm64.dmg (and .zip)
+```
+
+What to know before it surprises you:
+
+- **`ELECTRON_RUN_AS_NODE` must not be set.** VS Code's integrated terminal sets it, and it
+  turns the Electron binary into plain Node — in dev the app crashes on
+  `app.requestSingleInstanceLock`, packaged it exits instantly with no output. `app:dev`
+  strips it for you; if you launch the binary by hand, prefix with
+  `env -u ELECTRON_RUN_AS_NODE`.
+- **What ships where** (`electron-builder.yml`): the asar archive holds only the Electron
+  entry files. The webview bundle, `dist/cli.js` and `resources/py/` ship as
+  `extraResources` under `Contents/Resources/` — Python cannot exec a script that lives
+  inside an asar, and `main.ts` hands the daemon absolute paths from
+  `process.resourcesPath`.
+- **App icon** is `build/icon.png` (gitignored, ≥512 px). Regenerate it from the extension
+  icon with `mkdir -p build && sips -z 512 512 resources/icon.png --out build/icon.png`;
+  without it electron-builder falls back to the stock Electron icon.
+- **Builds are unsigned** (`identity: null`), so downloaded copies hit Gatekeeper — see the
+  Install section for the right-click → Open / `xattr` workaround. Locally built apps open
+  normally.
+- **First run writes `~/.mlx-console/app.json`**, the pointer to the install root the user
+  picked. Delete that file to re-run onboarding; delete the root folder itself to start
+  completely fresh.
+- The `"main"` field in `package.json` stays `dist/extension.js` for vsce;
+  electron-builder overrides it to `dist/electron/main.cjs` via `extraMetadata`, so one
+  manifest serves both packagers.
 
 </details>
 
@@ -512,7 +593,7 @@ keys are used by the CLI, without the `mlxConsole.` prefix, in
 `~/.mlx-console/config.json`.
 
 <details>
-<summary><b>All 32 settings</b></summary>
+<summary><b>All 34 settings</b></summary>
 
 <!-- settings:start -->
 
@@ -520,6 +601,8 @@ keys are used by the CLI, without the `mlxConsole.` prefix, in
 
 | Setting | Type | Default | Notes |
 | --- | --- | --- | --- |
+| `mode` | string | `auto` | Who owns the runtime. 'remote': the MLX Console desktop app does, and this extension is a thin client of its daemon. 'embedded': this extension manages the venv and servers itself, as before. 'auto': remote exactly when the desktop app has completed its first-run setup. |
+| `daemonUrl` | string | _(empty)_ | Explicit URL of a running MLX Console daemon (e.g. http://127.0.0.1:8090/?t=…). Leave empty to discover it automatically. |
 | `pythonPath` | string | _(empty)_ | Path to a Python 3 interpreter used to create the managed virtual environment. Leave empty to auto-detect. |
 | `venvPath` | string | _(empty)_ | Directory for the managed Python virtual environment where mlx-lm is installed. |
 | `modelsDir` | string | _(empty)_ | Directory where models are downloaded and cached (sets HF_HOME; models live under <dir>/hub). Shared with mlx_lm.server and the Hugging Face CLI. |
