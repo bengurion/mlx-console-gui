@@ -87,9 +87,10 @@ function derive(args: {
   metrics?: MetricsSnapshot
   budget?: { model: number; others: number; free: number; ceiling: number }
   profile?: ModelProfile
-  resident: boolean
+  status?: ServerStatusLite
 }): Derived {
-  const { history, metrics, budget, profile, resident } = args
+  const { history, metrics, budget, profile, status } = args
+  const resident = status?.modelState === 'loaded' && Boolean(status.loadedModel)
   const share = budget ? (budget.model + budget.others) / budget.ceiling : 0
 
   // Sustained, not instantaneous: one swap-out sample is housekeeping, three
@@ -111,6 +112,16 @@ function derive(args: {
 
   const swapUsed = metrics?.swap?.usedBytes ?? 0
 
+  /*
+   * The in-between states matter most: mlx_lm.server loads weights lazily,
+   * so right after "Launch" the honest-but-useless answer is "nothing
+   * resident". Say what is actually happening instead.
+   */
+  const model = status?.activeModel?.split('/').pop() ?? status?.activeModel
+  const loading = status?.modelState === 'loading'
+  const pendingFirstRequest =
+    status?.state === 'ready' && Boolean(status.activeModel) && status.modelState === 'none'
+
   const verdict: Verdict = swappingNow
     ? { tone: 'critical', icon: '✕', text: 'Swapping while a model is resident — the machine is being squeezed.' }
     : share > 0.92
@@ -119,11 +130,15 @@ function derive(args: {
         ? { tone: 'serious', icon: '▲', text: `Memory is growing fast — ceiling in ~${formatEta(etaSeconds)} at this rate.` }
         : swapUsed > 2 * 1024 ** 3
           ? { tone: 'warning', icon: '△', text: 'Not swapping now, but swap already holds earlier pressure.' }
-          : etaSeconds !== undefined
+          : etaSeconds !== undefined && !loading
             ? { tone: 'warning', icon: '△', text: `Memory is trending up — ceiling in ~${formatEta(etaSeconds)} if it keeps this rate.` }
-            : resident
-              ? { tone: 'good', icon: '✓', text: 'Comfortable. The model fits with room to spare.' }
-              : { tone: 'good', icon: '✓', text: 'Nothing resident — no model is costing you anything.' }
+            : loading
+              ? { tone: 'good', icon: '⟳', text: `Loading ${model} — weights are being read into memory.` }
+              : pendingFirstRequest
+                ? { tone: 'good', icon: '✓', text: `Server up — ${model} loads on its first request.` }
+                : resident
+                  ? { tone: 'good', icon: '✓', text: 'Comfortable. The model fits with room to spare.' }
+                  : { tone: 'good', icon: '✓', text: 'Nothing resident — no model is costing you anything.' }
 
   return { verdict, etaSeconds, slope, affordableTokens, swappingNow }
 }
@@ -200,7 +215,7 @@ export function DashboardPage() {
   }, [m, ceiling, held])
 
   const logic = useMemo(
-    () => derive({ history, metrics: m, budget, profile, resident: Boolean(status?.loadedModel) }),
+    () => derive({ history, metrics: m, budget, profile, status }),
     [history, m, budget, profile, status],
   )
 
@@ -225,7 +240,13 @@ export function DashboardPage() {
           <div className="col" style={{ gap: 2 }}>
             <strong>{logic.verdict.text}</strong>
             <span className="small muted">
-              {status?.loadedModel ? `${status.loadedModel} resident` : 'no model resident'}
+              {status?.loadedModel
+                ? `${status.loadedModel} resident`
+                : status?.modelState === 'loading'
+                  ? `${status.activeModel} loading…`
+                  : status?.activeModel
+                    ? `${status.activeModel} selected · nothing resident yet`
+                    : 'no model resident'}
               {ceiling ? ` · ${bytes(held)} of ${bytes(ceiling)}` : ''}
             </span>
           </div>
