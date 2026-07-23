@@ -161,7 +161,22 @@ def delete(repo_id, local_roots=()):
     emit({"ok": True, "freedBytes": freed})
 
 
+def _repo_cache_dir(repo_id):
+    """Where this repo's bytes land while hf_hub_download runs."""
+    try:
+        from huggingface_hub.constants import HF_HUB_CACHE
+
+        base = HF_HUB_CACHE
+    except Exception:  # noqa: BLE001
+        base = os.path.join(
+            os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface")), "hub"
+        )
+    return os.path.join(base, "models--" + repo_id.replace("/", "--"))
+
+
 def download(repo_id):
+    import threading
+
     from huggingface_hub import HfApi, hf_hub_download
 
     api = HfApi()
@@ -175,15 +190,49 @@ def download(repo_id):
     total = sum(size for _, size in files)
     emit({"event": "start", "total": total, "nbFiles": len(files)})
 
+    # hf_hub_download says nothing until a file is complete, and one
+    # safetensors shard can be many gigabytes — a bar frozen at the previous
+    # file for minutes reads as a hang. The bytes do land in the repo's cache
+    # directory as they arrive (blobs/*.incomplete included), so a watcher on
+    # that directory is the difference between a moving bar and a dead one.
+    lock = threading.Lock()
+    state = {"file": None, "best": 0}
+    stop = threading.Event()
+
+    def report(downloaded):
+        with lock:
+            # Monotonic: the per-file sum and the directory size disagree by a
+            # partial file's worth, and a bar that steps backwards looks broken.
+            state["best"] = max(state["best"], min(downloaded, total) if total else downloaded)
+            payload = {"event": "progress", "downloaded": state["best"], "total": total}
+            if state["file"]:
+                payload["file"] = state["file"]
+            emit(payload)
+
+    repo_dir = _repo_cache_dir(repo_id)
+
+    def watch():
+        while not stop.wait(1.0):
+            size, _files = _dir_stats(repo_dir)
+            report(size)
+
+    if total:
+        threading.Thread(target=watch, daemon=True).start()
+
     done = 0
-    for fname, size in files:
-        try:
-            hf_hub_download(repo_id, fname)
-        except Exception as exc:  # noqa: BLE001
-            emit({"event": "error", "message": f"{fname}: {exc}"})
-            return
-        done += size
-        emit({"event": "progress", "downloaded": done, "total": total, "file": fname})
+    try:
+        for fname, size in files:
+            state["file"] = fname
+            try:
+                hf_hub_download(repo_id, fname)
+            except Exception as exc:  # noqa: BLE001
+                with lock:
+                    emit({"event": "error", "message": f"{fname}: {exc}"})
+                return
+            done += size
+            report(done)
+    finally:
+        stop.set()
 
     emit({"event": "done", "total": total})
 
