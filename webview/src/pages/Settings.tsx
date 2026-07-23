@@ -223,8 +223,8 @@ export function SettingsPage() {
             style={{ width: '100%', marginTop: 6, maxWidth: 480 }}
           />
 
-          {/* Groups side by side where the width allows; one column in a panel. */}
-          <div className="grid-cards" style={{ marginTop: 4 }}>
+          {/* Two columns of groups; one in a narrow panel. */}
+          <div className="grid-2" style={{ marginTop: 4 }}>
             {groups.map((g) => (
               <div key={g}>
                 <div className="small" style={{ opacity: 0.8, marginBottom: 4 }}>

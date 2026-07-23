@@ -70,6 +70,10 @@ export const STYLES = /* css */ `
   .filters { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
   .filters select { width: auto; }
   a.danger { color: var(--vscode-errorForeground); }
+  /* Two columns of settings groups: enough to use a desktop, few enough to
+     scan. Collapses to one in a narrow panel. */
+  .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 28px; align-items: start; }
+  @media (max-width: 640px) { .grid-2 { grid-template-columns: 1fr; } }
   button {
     padding: 4px 10px;
     color: var(--vscode-button-foreground);
