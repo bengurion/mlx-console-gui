@@ -13,6 +13,7 @@ The Info page became a document worth reading, and search numbers are now checke
 - **Convert plans use the Hub's exact parameter count** — repos whose names say nothing about size no longer show "size unknown" for every bit width; the name-guess remains the offline fallback.
 - **bf16 is a conversion choice** — the original precision in MLX format, no quantization, output in a `-bf16` directory. Offered first, never recommended over a quantization that fits.
 - **Pre-quantized repos are refused up front** — `mlx_lm.convert` only reads full-precision weights, so an AWQ/GPTQ/bnb repo now says so immediately instead of failing after the hour-long download.
+- **Pre-quantized cards convert their source** — the Hub records what an AWQ/GPTQ/bnb repo was quantized from, so the button reads "Convert the source…" and plans against that repo (as GGUF cards already did) instead of dead-ending. Conversion progress follows the source id back to the card.
 
 ## 0.0.17 — Unreleased
 

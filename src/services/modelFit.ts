@@ -255,6 +255,19 @@ export function hubCountsLogicalParams(id: string, tags: string[] = []): boolean
 }
 
 /**
+ * The source repo, recovered from the Hub's structured tags when `cardData`
+ * does not carry it — `base_model:quantized:Qwen/Qwen2.5-72B-Instruct` names
+ * exactly the repo `mlx_lm.convert` should be pointed at.
+ */
+export function baseModelFromTags(tags: string[] = []): string | undefined {
+  for (const t of tags) {
+    const m = /^base_model:(?:quantized:|finetune:|adapter:)?(.+\/.+)$/.exec(t)
+    if (m) return m[1]
+  }
+  return undefined
+}
+
+/**
  * How many parameters a model really has.
  *
  * The Hub's `safetensors.total` counts stored *elements*, which for a

@@ -33,6 +33,8 @@ export interface ModelSummary {
   fit?: FitVerdict
   /** GGUF repos cannot be run by mlx-lm (llama.cpp format). */
   gguf?: boolean
+  /** AWQ/GPTQ/bnb: safetensors, but pre-quantized — mlx_lm.convert cannot read them. */
+  preQuantized?: boolean
   format?: ModelFormat
   /** Parameter count in billions, exact when the Hub reports safetensors metadata. */
   paramsB?: number

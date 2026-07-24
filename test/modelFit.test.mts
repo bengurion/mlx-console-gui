@@ -150,6 +150,16 @@ test('AWQ/GPTQ/bnb repos are recognised as reporting logical counts', async () =
   assert.ok(est > 7e9 && est < 11e9, `got ${est}`)
 })
 
+test('baseModelFromTags recovers the source repo from structured tags', async () => {
+  const { baseModelFromTags } = await import('../src/services/modelFit.ts')
+  assert.equal(
+    baseModelFromTags(['qwen2', 'base_model:quantized:Qwen/Qwen2.5-72B-Instruct', 'awq']),
+    'Qwen/Qwen2.5-72B-Instruct',
+  )
+  assert.equal(baseModelFromTags(['base_model:meta-llama/Llama-3.1-8B']), 'meta-llama/Llama-3.1-8B')
+  assert.equal(baseModelFromTags(['text-generation', 'en']), undefined)
+})
+
 test('parseParamsB falls back to millions only when no B-count exists', async () => {
   const { parseParamsB } = await import('../src/services/modelFit.ts')
   assert.equal(parseParamsB('HuggingFaceTB/SmolLM2-135M-Instruct'), 0.135)

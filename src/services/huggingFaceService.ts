@@ -2,6 +2,7 @@ import { Config } from '../config.ts'
 import { log } from '../core/logging.ts'
 import { HF_API, MAX_PAGE, buildSearchUrl, deriveQuant, nextPageUrl } from './hfQuery.ts'
 import {
+  baseModelFromTags,
   bytesFromSafetensors,
   classifyFormat,
   estimateBytes,
@@ -261,8 +262,9 @@ function toSummary(m: HfModel): ModelSummary {
     // block for gated and unusual repos — so fall back to the tag rather than
     // taking silence as a no.
     format: classifyFormat(id, tags, m.library_name, m.safetensors ? true : undefined),
+    preQuantized: logical || undefined,
     paramsB,
-    baseModel: Array.isArray(base) ? base[0] : base,
+    baseModel: (Array.isArray(base) ? base[0] : base) ?? baseModelFromTags(tags),
     sizeBytes:
       exactBytes ??
       (paramsB !== undefined ? estimateBytesFromParams(paramsB, quant) : estimateBytes(id, quant)),

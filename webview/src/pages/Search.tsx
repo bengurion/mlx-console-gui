@@ -284,7 +284,9 @@ export function SearchPage() {
             key={m.id}
             model={m}
             state={dl[m.id]}
-            convertState={conv[m.id]}
+            // A GGUF or pre-quantized card converts its *source* repo, so its
+            // progress arrives under that id.
+            convertState={conv[m.id] ?? (m.baseModel ? conv[m.baseModel] : undefined)}
           />
         ))}
       </div>
@@ -382,7 +384,13 @@ function ResultCard({
       </div>
 
       {format === 'convertible' && (
-        <div className="small muted">Not MLX yet — convert to run it.</div>
+        <div className="small muted">
+          {model.preQuantized
+            ? model.baseModel
+              ? `Already quantized (AWQ/GPTQ/bnb) — mlx-lm cannot use it, but its source ${model.baseModel} converts.`
+              : 'Already quantized (AWQ/GPTQ/bnb) — mlx-lm can neither run nor convert this.'
+            : 'Not MLX yet — convert to run it.'}
+        </div>
       )}
 
       {format === 'unsupported' && (
@@ -416,12 +424,16 @@ function ResultCard({
 
       {plan && (
         <div className="col" style={{ gap: 4 }}>
-          <div className="small muted">
-            {plan.repo !== model.id && <strong>{plan.repo}</strong>}{' '}
-            {plan.paramsB
-              ? `~${plan.paramsB}B parameters · ${bytes(plan.budgetBytes)} usable of ${bytes(plan.totalBytes)}`
-              : 'Neither the Hub nor the repo name says how big this model is — sizes below are unknown, not zero.'}
-          </div>
+          {/* With no options there is only the error — a "sizes are unknown"
+              header above a refusal reads as two contradictory diagnoses. */}
+          {plan.options.length > 0 && (
+            <div className="small muted">
+              {plan.repo !== model.id && <strong>{plan.repo}</strong>}{' '}
+              {plan.paramsB
+                ? `~${plan.paramsB}B parameters · ${bytes(plan.budgetBytes)} usable of ${bytes(plan.totalBytes)}`
+                : 'Neither the Hub nor the repo name says how big this model is — sizes below are unknown, not zero.'}
+            </div>
+          )}
           {plan.error && (
             <div className="small" style={{ color: 'var(--vscode-editorWarning-foreground)' }}>
               {plan.error}
@@ -452,10 +464,12 @@ function ResultCard({
               </span>
             </button>
           ))}
-          <div className="small muted">
-            Conversion downloads the full-precision weights first — that is the slow part. Progress
-            appears under Downloads.
-          </div>
+          {plan.options.length > 0 && (
+            <div className="small muted">
+              Conversion downloads the full-precision weights first — that is the slow part.
+              Progress appears under Downloads.
+            </div>
+          )}
         </div>
       )}
 
@@ -468,11 +482,18 @@ function ResultCard({
         {format === 'convertible' && (
           <button
             disabled={convertState === 'converting' || convertState === 'downloading'}
-            title="Pick a quantization and convert this repo to MLX"
+            title={
+              // A pre-quantized repo itself is a dead end; the button quietly
+              // aims at the source the Hub says it was quantized from.
+              model.preQuantized && model.baseModel
+                ? `Convert ${model.baseModel}, the full-precision model this was quantized from`
+                : 'Pick a quantization and convert this repo to MLX'
+            }
             onClick={() => {
               if (plan) return setPlan(undefined)
               setPlanError(undefined)
-              void rpc<ConvertPlan>('getConvertPlan', { repo: model.id })
+              const repo = model.preQuantized && model.baseModel ? model.baseModel : model.id
+              void rpc<ConvertPlan>('getConvertPlan', { repo })
                 .then(setPlan)
                 .catch((e: Error) => setPlanError(e.message))
             }}
@@ -483,7 +504,9 @@ function ResultCard({
                 ? 'Converted'
                 : plan
                   ? 'Cancel'
-                  : 'Convert to MLX…'}
+                  : model.preQuantized && model.baseModel
+                    ? 'Convert the source…'
+                    : 'Convert to MLX…'}
           </button>
         )}
         {format === 'unsupported' &&
