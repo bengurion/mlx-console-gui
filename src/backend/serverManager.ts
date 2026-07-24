@@ -116,6 +116,7 @@ export class ServerManager {
   }
 
   get status(): ServerStatus {
+    this.dropDeadAdoption()
     return {
       state: this._state,
       baseUrl: this.baseUrl(),
@@ -188,6 +189,27 @@ export class ServerManager {
     }
   }
 
+  /**
+   * Adoption checked the pid was alive; nothing rechecked afterwards, so a
+   * server that later died kept showing as "loaded" forever — a ghost the
+   * Stop button could only signal into an error. Liveness is re-verified on
+   * every status read (kill(pid, 0) is cheap), and a dead adoption clears
+   * both the display and the registry record other windows would trip on.
+   */
+  private dropDeadAdoption(): void {
+    if (this.proc || this._externalPid === undefined) return
+    if (pidAlive(this._externalPid)) return
+    log.warn(`Adopted server pid ${this._externalPid} is gone; clearing its state`)
+    this._externalPid = undefined
+    this._modelState = 'none'
+    this._loadedModel = undefined
+    this._loadedAt = undefined
+    this._loadStartedAt = undefined
+    if (this._state === 'ready') this._state = 'stopped'
+    void this.publishSharedState()
+    this._onDidChange.fire(this.status)
+  }
+
   /** Take on the loaded-model state recorded by whichever window loaded it. */
   private async adoptSharedState(): Promise<void> {
     if (!this.stateFile || this.proc) return // owner's own state wins
@@ -198,8 +220,12 @@ export class ServerManager {
       return
     }
     const shared = parseState(text)
-    if (!isUsableState(shared, Config.serverPort(), pidAlive, Date.now())) return
-    if (!shared?.loadedModel) return
+    if (!isUsableState(shared, Config.serverPort(), pidAlive, Date.now()) || !shared?.loadedModel) {
+      // The record went away or died. If what we are showing came from that
+      // record, showing it any longer would be a ghost.
+      this.dropDeadAdoption()
+      return
+    }
     if (this._loadedModel === shared.loadedModel && this._modelState === 'loaded') return
 
     this._loadedModel = shared.loadedModel

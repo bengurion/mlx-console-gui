@@ -162,10 +162,14 @@ export class HeadlessServer {
           'No mlx-lm environment found. Run MLX: Setup in VS Code once, or set venvPath in ~/.mlx-console/config.json.',
       }
     }
-    const bin = venvBin(venv, 'mlx_lm.server')
+    // `python -m mlx_lm.server`, never the venv's bin launcher: pip bakes the
+    // venv's absolute path into those scripts, so a migrated venv leaves them
+    // exiting 126 against a python that no longer exists. The module form
+    // keeps "mlx_lm.server" in the command line for pgrep-based matching.
+    const bin = venvBin(venv, 'python')
     if (!fs.existsSync(bin)) return { ok: false, message: `Not found: ${bin}` }
 
-    const args = buildServerArgs({
+    const serverArgs = buildServerArgs({
       bindHost: this.bindHost(),
       port: this.port,
       promptCacheSize: num(this.settings.get('server.promptCacheSize')),
@@ -179,6 +183,7 @@ export class HeadlessServer {
     })
 
     // Detached, as in the extension: the server outlives whatever started it.
+    const args = ['-m', 'mlx_lm.server', ...serverArgs]
     const proc = spawn(bin, args, { env: this.processEnv(), detached: true, stdio: 'ignore' })
     proc.unref()
     return { ok: true, message: `Started mlx_lm.server (pid ${proc.pid}) on port ${this.port}.` }
