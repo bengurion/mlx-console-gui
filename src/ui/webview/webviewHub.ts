@@ -445,7 +445,12 @@ export class WebviewHub {
     if (!coerced.ok) return { ok: false, error: coerced.error }
 
     try {
-      await settings().update(spec.short, coerced.value)
+      // A value equal to the default is stored as *unset*, not as an explicit
+      // copy of it: explicitly-set settings override per-model recommendations
+      // (generation_config defaults), so Reset must truly return to "unset".
+      const value =
+        JSON.stringify(coerced.value) === JSON.stringify(spec.default) ? undefined : coerced.value
+      await settings().update(spec.short, value)
       log.info(`Setting updated: ${key}`)
       return { ok: true, settings: this.settingsCatalog() }
     } catch (err) {

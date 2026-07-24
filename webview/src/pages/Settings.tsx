@@ -33,50 +33,60 @@ function toText(value: unknown, spec: Pick<SettingSpec, 'type' | 'unit'>): strin
   return String(value)
 }
 
+/** What the control should display for a staged (not yet saved) value. */
+function stagedText(staged: unknown, spec: Pick<SettingSpec, 'type' | 'unit'>): string {
+  return typeof staged === 'string' ? staged : toText(staged, spec)
+}
+
 /**
- * One control, chosen by declared type. Edits commit on blur (or immediately
- * for checkboxes) so a half-typed number is never written.
+ * One control, chosen by declared type. Edits are *staged*: they change
+ * nothing until the page's Save button applies them, so a half-finished
+ * editing session never leaves the config in a state nobody chose.
  */
 export function Field({
   spec,
-  onSaved,
+  staged,
+  error,
+  onStage,
 }: {
   spec: SettingSpec
-  onSaved?: () => void
+  /** The staged value for this key, or undefined when unedited. */
+  staged: unknown
+  /** Save-time error for this key, if the last save rejected it. */
+  error?: string
+  onStage: (key: string, value: unknown) => void
 }) {
-  const [draft, setDraft] = useState(() => toText(spec.value, spec))
-  const [error, setError] = useState<string>()
-  const [saved, setSaved] = useState(false)
+  const [draft, setDraft] = useState(() =>
+    staged !== undefined ? stagedText(staged, spec) : toText(spec.value, spec),
+  )
 
-  // Re-sync when the host pushes new values (e.g. another edit, or a reset).
-  useEffect(() => setDraft(toText(spec.value, spec)), [spec.value, spec.type, spec.unit])
+  // Re-sync when the host pushes new values, or when a discard clears staging.
+  useEffect(() => {
+    setDraft(staged !== undefined ? stagedText(staged, spec) : toText(spec.value, spec))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [staged, spec.value, spec.type, spec.unit])
 
-  async function commit(value: unknown) {
-    setError(undefined)
-    // Through the shared store, so every other editor of this setting updates.
-    const res = await saveSetting(spec.key, value)
-
-    if (!res.ok) {
-      setError(res.error ?? 'Could not save.')
-      return
-    }
-    setSaved(true)
-    setTimeout(() => setSaved(false), 1200)
-    onSaved?.()
-  }
-
+  const stage = (value: unknown) => onStage(spec.key, value)
   const isDefault = JSON.stringify(spec.value) === JSON.stringify(spec.default)
+  const dirty = staged !== undefined
 
   return (
-    <div style={{ marginBottom: 10 }}>
+    <div style={{ marginBottom: 12 }}>
       <div className="row spread">
         <label className="small">
           <strong>{spec.label}</strong>
           {!isDefault && <span className="badge" style={{ marginLeft: 6 }}>modified</span>}
-          {saved && <span className="small muted" style={{ marginLeft: 6 }}>saved</span>}
+          {dirty && (
+            <span
+              className="small"
+              style={{ marginLeft: 6, color: 'var(--vscode-editorWarning-foreground, #d29922)' }}
+            >
+              unsaved
+            </span>
+          )}
         </label>
         {!isDefault && (
-          <a className="small" onClick={() => void commit(spec.default)}>
+          <a className="small" onClick={() => stage(spec.default)}>
             Reset
           </a>
         )}
@@ -86,8 +96,8 @@ export function Field({
         <label className="small row" style={{ gap: 6, alignItems: 'center' }}>
           <input
             type="checkbox"
-            checked={Boolean(spec.value)}
-            onChange={(e) => void commit(e.target.checked)}
+            checked={dirty ? Boolean(staged) : Boolean(spec.value)}
+            onChange={(e) => stage(e.target.checked)}
           />
           <span className="muted">{spec.description}</span>
         </label>
@@ -98,7 +108,7 @@ export function Field({
               value={draft}
               onChange={(e) => {
                 setDraft(e.target.value)
-                void commit(e.target.value)
+                stage(e.target.value)
               }}
               style={{ width: '100%' }}
             >
@@ -113,8 +123,10 @@ export function Field({
               value={draft}
               rows={3}
               spellCheck={false}
-              onChange={(e) => setDraft(e.target.value)}
-              onBlur={() => void commit(draft)}
+              onChange={(e) => {
+                setDraft(e.target.value)
+                stage(e.target.value)
+              }}
               style={{ width: '100%', fontFamily: 'var(--vscode-editor-font-family)' }}
             />
           ) : (
@@ -128,10 +140,9 @@ export function Field({
                     : 'text'
               }
               value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onBlur={() => void commit(draft)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void commit(draft)
+              onChange={(e) => {
+                setDraft(e.target.value)
+                stage(e.target.value)
               }}
               placeholder={
                 spec.unit === 'bytes'
@@ -159,6 +170,9 @@ export function Field({
  *
  * The catalog is derived host-side from the package.json contribution, so a new
  * setting shows up here automatically — there is no second list to maintain.
+ * Edits stage locally and apply together on Save: several of these settings
+ * belong to one decision (a port and its exposure, a draft model and its token
+ * count), and applying keystroke by keystroke made half-decisions live.
  */
 export function SettingsPage() {
   const settings = useSettings()
@@ -167,6 +181,51 @@ export function SettingsPage() {
   const [open, setOpen] = useState(true)
   const ref = useRef<HTMLDivElement>(null)
   const [filter, setFilter] = useState('')
+  const [pending, setPending] = useState<Record<string, unknown>>({})
+  const [errors, setErrors] = useState<Record<string, string>>({})
+  const [saving, setSaving] = useState(false)
+  const [savedFlash, setSavedFlash] = useState(false)
+
+  function stage(key: string, value: unknown) {
+    setPending((p) => {
+      const spec = settings.find((s) => s.key === key)
+      // Typing back the current value un-stages: nothing would change.
+      const unchanged =
+        spec &&
+        (typeof value === 'string'
+          ? value === toText(spec.value, spec)
+          : JSON.stringify(value) === JSON.stringify(spec.value))
+      const next = { ...p }
+      if (unchanged) delete next[key]
+      else next[key] = value
+      return next
+    })
+  }
+
+  async function saveAll() {
+    setSaving(true)
+    const failed: Record<string, string> = {}
+    for (const [key, value] of Object.entries(pending)) {
+      // Through the shared store, so every other editor of a setting updates.
+      const res = await saveSetting(key, value)
+      if (!res.ok) failed[key] = res.error ?? 'Could not save.'
+    }
+    setErrors(failed)
+    // Rejected values stay staged so the correction is one edit away.
+    setPending((p) => Object.fromEntries(Object.entries(p).filter(([k]) => failed[k])))
+    setSaving(false)
+    if (Object.keys(failed).length === 0) {
+      setSavedFlash(true)
+      setTimeout(() => setSavedFlash(false), 1500)
+    }
+  }
+
+  function discard() {
+    setPending({})
+    setErrors({})
+  }
+
+  const dirtyCount = Object.keys(pending).length
 
   const needle = filter.trim().toLowerCase()
   const visible = needle
@@ -204,15 +263,48 @@ export function SettingsPage() {
   )
 
   return (
-    <div className="card col" ref={ref}>
+    <div className="card col" ref={ref} style={{ fontSize: '1.08em', lineHeight: 1.55 }}>
       <div className="row spread">
         <strong>Settings</strong>
         <a onClick={() => setOpen(!open)}>{open ? 'Hide' : `Edit (${settings.length})`}</a>
       </div>
       <div className="small muted">
-        {settings.length} settings{modified > 0 && `, ${modified} modified`}. Saved as you edit —
-        there is nothing to apply.
+        {settings.length} settings{modified > 0 && `, ${modified} modified`}. Edits stage here and
+        apply together when you save.
       </div>
+
+      {/* The save bar: sticky, so 34 settings of scrolling never hides the way
+          to apply or abandon what has been edited. */}
+      {(dirtyCount > 0 || savedFlash) && (
+        <div
+          className="row spread"
+          style={{
+            position: 'sticky',
+            top: 0,
+            zIndex: 5,
+            padding: '8px 10px',
+            borderRadius: 6,
+            background: 'var(--page-elevated, var(--vscode-editorWidget-background))',
+            border: '1px solid var(--vscode-panel-border)',
+          }}
+        >
+          <span className="small">
+            {savedFlash && dirtyCount === 0
+              ? 'Saved.'
+              : `${dirtyCount} unsaved change${dirtyCount === 1 ? '' : 's'}`}
+          </span>
+          {dirtyCount > 0 && (
+            <span className="row" style={{ gap: 8 }}>
+              <button disabled={saving} onClick={() => void saveAll()}>
+                {saving ? 'Saving…' : 'Save'}
+              </button>
+              <button className="secondary" disabled={saving} onClick={discard}>
+                Discard
+              </button>
+            </span>
+          )}
+        </div>
+      )}
 
       {open && (
         <>
@@ -237,7 +329,13 @@ export function SettingsPage() {
                       {visible
                         .filter((s) => s.group === g)
                         .map((s) => (
-                          <Field key={s.key} spec={s} />
+                          <Field
+                            key={s.key}
+                            spec={s}
+                            staged={pending[s.key]}
+                            error={errors[s.key]}
+                            onStage={stage}
+                          />
                         ))}
                     </div>
                   ))}
