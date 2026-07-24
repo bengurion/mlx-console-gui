@@ -79,6 +79,7 @@ export function deriveQuant(id: string, tags?: string[]): string | undefined {
   if (/\b(4[-_ ]?bit|int4|nf4|w4a16|awq|gptq)\b/.test(hay) || /\bi?q4(?!\d)/.test(hay)) return '4bit'
   if (/\b(8[-_ ]?bit|int8)\b/.test(hay) || /\bq8(?!\d)/.test(hay)) return '8bit'
   if (/\b(6[-_ ]?bit)\b/.test(hay) || /\bq6(?!\d)/.test(hay)) return '6bit'
+  if (/\b(5[-_ ]?bit)\b/.test(hay) || /\bq5(?!\d)/.test(hay)) return '5bit'
   if (/\b(3[-_ ]?bit)\b/.test(hay) || /\bq3(?!\d)/.test(hay)) return '3bit'
   if (/\b(2[-_ ]?bit)\b/.test(hay) || /\bq2(?!\d)/.test(hay)) return '2bit'
   if (/\bbf16\b/.test(hay)) return 'bf16'

@@ -84,6 +84,8 @@ export function bytesPerParam(quant?: string): number {
       return 0.375
     case '4bit':
       return 0.5
+    case '5bit':
+      return 0.625
     case '6bit':
       return 0.75
     case '8bit':
@@ -321,8 +323,11 @@ export function withinParams(
   return true
 }
 
-/** Bit widths `mlx_lm.convert --q-bits` accepts, highest quality first. */
-export const CONVERT_BITS = [8, 6, 4, 3, 2]
+/**
+ * Bit widths `mlx_lm.convert --q-bits` accepts, highest quality first.
+ * mlx supports exactly {2,3,4,5,6,8}; 1 and 7 are rejected by mx.quantize.
+ */
+export const CONVERT_BITS = [8, 6, 5, 4, 3, 2]
 
 /**
  * The no-quantization choice: convert to MLX at the original bf16 precision.

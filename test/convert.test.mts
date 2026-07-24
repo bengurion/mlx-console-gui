@@ -66,7 +66,7 @@ test('the quantization choices are data, not a menu', () => {
   assert.equal(plan.paramsB, 7)
   assert.deepEqual(
     plan.options.map((o) => o.bits),
-    [16, 8, 6, 4, 3, 2],
+    [16, 8, 6, 5, 4, 3, 2],
   )
   const recommended = plan.options.filter((o) => o.recommended)
   assert.equal(recommended.length, 1, 'exactly one is recommended')
@@ -88,7 +88,7 @@ test('a repo that cannot be converted says so instead of offering choices', () =
 test('a model too big even at 2-bit is still convertible, with a warning', () => {
   const { convert } = harness()
   const plan = convert.plan('meta-llama/Llama-3.1-4000B') // absurd on purpose
-  assert.equal(plan.options.length, 6, 'the choices remain; it is the machine that is small')
+  assert.equal(plan.options.length, 7, 'the choices remain; it is the machine that is small')
   assert.match(plan.error ?? '', /does not fit/)
   assert.equal(
     plan.options.some((o) => o.recommended),
@@ -101,7 +101,7 @@ test('an unknown parameter count offers every width rather than refusing', () =>
   const { convert } = harness()
   const plan = convert.plan('some-org/mystery-model')
   assert.equal(plan.paramsB, undefined)
-  assert.equal(plan.options.length, 6)
+  assert.equal(plan.options.length, 7)
   assert.equal(plan.error, undefined)
 })
 
