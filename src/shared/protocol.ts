@@ -99,6 +99,11 @@ export interface LocalModel {
   path: string
   /** Converted locally rather than downloaded: lives outside the HF cache. */
   local?: boolean
+  /**
+   * False when weight files are missing (interrupted download / conversion):
+   * present on disk, but not loadable — offer Resume, never Launch.
+   */
+  complete?: boolean
 }
 
 export type DownloadState = 'queued' | 'downloading' | 'done' | 'error' | 'canceled'

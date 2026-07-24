@@ -24,6 +24,19 @@ export function convertedRoot(): string {
   return modelsDir ? path.join(modelsDir, 'mlx-converted') : path.join(os.homedir(), 'mlx-models')
 }
 
+/**
+ * Where the download list is remembered between runs.
+ *
+ * Beside the cache it describes, so every host pointed at the same models
+ * directory sees the same interrupted downloads — plain JSON, not a database:
+ * a handful of records, one writer at a time, and human-readable when
+ * something needs debugging.
+ */
+export function downloadsStateFile(): string | undefined {
+  const modelsDir = Config.modelsDir()
+  return modelsDir ? path.join(modelsDir, '.mlx-downloads.json') : undefined
+}
+
 export function mlxProcessEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env }
 

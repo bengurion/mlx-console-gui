@@ -1,5 +1,7 @@
+import * as fs from 'node:fs'
 import { Emitter } from '../core/events'
 import { log } from '../core/logging'
+import { downloadsStateFile } from '../util/env'
 import type { PythonHelper } from '../backend/pythonHelper'
 import type { DownloadItem } from '../shared/protocol'
 
@@ -30,16 +32,62 @@ export class DownloadManager {
   private readonly _onDidComplete = new Emitter<string>()
   readonly onDidComplete = this._onDidComplete.event
 
-  constructor(private readonly helper: PythonHelper) {}
+  private saveTimer: NodeJS.Timeout | undefined
+
+  constructor(private readonly helper: PythonHelper) {
+    this.restore()
+  }
 
   list(): DownloadItem[] {
     return [...this.items.values()]
+  }
+
+  /**
+   * Bring back what was in flight when the process last died. Interrupted
+   * items reappear as canceled-with-Resume rather than auto-starting: the
+   * partial bytes resume either way, but restarting a 100 GB pull the moment
+   * the app opens is a decision the user should make.
+   */
+  private restore() {
+    const file = downloadsStateFile()
+    if (!file) return
+    try {
+      const items = JSON.parse(fs.readFileSync(file, 'utf8')) as DownloadItem[]
+      for (const item of items) {
+        if (!item?.repo) continue
+        // Finished items live in the Models page; carrying them over would
+        // resurrect "Complete" cards for models long since deleted.
+        if (item.state === 'done') continue
+        if (item.state === 'downloading' || item.state === 'queued') {
+          item.state = 'canceled'
+          item.message = 'Interrupted — Resume continues from the bytes already on disk'
+        }
+        this.items.set(item.repo, item)
+      }
+    } catch {
+      // Missing or corrupt state is a fresh start, not an error.
+    }
+  }
+
+  /** Debounced: progress ticks arrive every second, one write per second is plenty. */
+  private persist() {
+    const file = downloadsStateFile()
+    if (!file || this.saveTimer) return
+    this.saveTimer = setTimeout(() => {
+      this.saveTimer = undefined
+      try {
+        fs.writeFileSync(file, JSON.stringify(this.list(), null, 1))
+      } catch (err) {
+        log.warn('Could not persist download state', err)
+      }
+    }, 1000)
   }
 
   private update(repo: string, patch: Partial<DownloadItem>) {
     const prev = this.items.get(repo) ?? { repo, state: 'queued', progress: 0 }
     this.items.set(repo, { ...prev, ...patch })
     this._onDidChange.fire(this.list())
+    this.persist()
   }
 
   async start(repo: string): Promise<void> {
@@ -108,6 +156,18 @@ export class DownloadManager {
 
   dispose() {
     for (const c of this.controllers.values()) c.abort()
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer)
+      this.saveTimer = undefined
+      const file = downloadsStateFile()
+      if (file) {
+        try {
+          fs.writeFileSync(file, JSON.stringify(this.list(), null, 1))
+        } catch {
+          /* shutting down */
+        }
+      }
+    }
     this._onDidChange.dispose()
     this._onDidComplete.dispose()
   }

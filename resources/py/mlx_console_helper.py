@@ -55,6 +55,34 @@ def _dir_stats(path):
     return size, files
 
 
+def _snapshot_complete(snap):
+    """Whether a snapshot holds every weight file it says it needs.
+
+    Derived, not recorded: hf_hub links a file into the snapshot only once its
+    blob is complete, and the safetensors index names every shard — so an
+    interrupted download is visible as missing weights, with no state file to
+    maintain or to drift. A repo passing this check is loadable by mlx-lm; a
+    partial one must not be offered as a model.
+    """
+    try:
+        entries = set(os.listdir(snap))
+    except OSError:
+        return False
+    if "config.json" not in entries:
+        return False
+    if not any(e.endswith(".safetensors") for e in entries):
+        return False
+    idx = os.path.join(snap, "model.safetensors.index.json")
+    if os.path.exists(idx):
+        try:
+            with open(idx) as f:
+                weight_map = json.load(f).get("weight_map", {})
+            return all(shard in entries for shard in set(weight_map.values()))
+        except (OSError, ValueError):
+            return False
+    return True
+
+
 def scan_local(roots):
     """Models that live as plain directories rather than in the HF cache.
 
@@ -93,6 +121,7 @@ def scan_local(roots):
                     "lastModified": last,
                     "path": path,
                     "local": True,
+                    "complete": _snapshot_complete(path),
                 }
             )
     return models
@@ -119,6 +148,10 @@ def scan(local_roots=()):
                 "nbFiles": int(repo.nb_files),
                 "lastModified": last,
                 "path": str(repo.repo_path),
+                # Any complete revision will do; an interrupted download has none.
+                "complete": any(
+                    _snapshot_complete(str(rev.snapshot_path)) for rev in repo.revisions
+                ),
             }
         )
     emit({"ok": True, "models": models})

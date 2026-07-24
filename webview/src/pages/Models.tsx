@@ -95,6 +95,10 @@ export function ModelsPage() {
           // then displace it — minutes of work to end up somewhere unexpected.
           const otherLoading = server?.modelState === 'loading' && !active
           const willDisplace = Boolean(server?.loadedModel) && !loaded
+          // Weight files are missing — an interrupted download or conversion.
+          // Launching would fail on a missing shard, so offer the way forward
+          // (Resume) instead of the dead end.
+          const partial = m.complete === false
           const launchLabel = working
             ? 'Working…'
             : loading
@@ -123,6 +127,18 @@ export function ModelsPage() {
                   {m.local ? shortRepo(m.repo) : m.repo}
                 </strong>
                 <span className="row">
+                  {partial && (
+                    <span
+                      className="pill"
+                      title="Weight files are missing — the download or conversion was interrupted."
+                      style={{
+                        color: 'var(--viz-warn, #b45309)',
+                        background: 'color-mix(in srgb, var(--viz-warn, #b45309) 12%, transparent)',
+                      }}
+                    >
+                      partial
+                    </span>
+                  )}
                   {m.local && <span className="badge">converted</span>}
                   {active && (
                     <span
@@ -143,6 +159,16 @@ export function ModelsPage() {
                 {m.lastModified && <span className="muted">{relativeDate(m.lastModified)}</span>}
               </div>
               <div className="row wrap">
+                {partial && !m.local && (
+                  <button
+                    disabled={working}
+                    title="Continues the download from the bytes already on disk."
+                    onClick={() => rpc('startDownload', { repo: m.repo })}
+                  >
+                    Resume download
+                  </button>
+                )}
+                {!partial && (
                 <button
                   disabled={working || loaded || loading || otherLoading}
                   title={
@@ -160,6 +186,8 @@ export function ModelsPage() {
                 >
                   {launchLabel}
                 </button>
+                )}
+                {!partial && (
                 <button
                   className="secondary"
                   disabled={working}
@@ -167,6 +195,7 @@ export function ModelsPage() {
                 >
                   Set default
                 </button>
+                )}
                 <button
                   className="secondary"
                   onClick={() => setConfiguring((c) => (c === m.repo ? undefined : m.repo))}
