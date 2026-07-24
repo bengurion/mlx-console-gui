@@ -105,7 +105,7 @@ export interface MessageSink {
   postMessage(message: unknown): unknown
 }
 
-/** Central message router shared by all MLX Console webview views. */
+/** Central message router shared by all MLX Console GUI webview views. */
 export class WebviewHub {
   private readonly webviews = new Set<MessageSink>()
   private readonly disposables: Disposable[] = []

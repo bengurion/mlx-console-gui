@@ -68,10 +68,10 @@ export function SetupPage() {
   return (
     <div className="col" style={{ maxWidth: 640, margin: '0 auto' }}>
       <div className="card col">
-        <h2>Welcome to MLX Console</h2>
+        <h2>Welcome to MLX Console GUI</h2>
         <div className="small muted">
           Pick a folder to install into. Everything lives there — the Python environment,
-          downloaded models, settings and logs — so moving or removing MLX Console later means
+          downloaded models, settings and logs — so moving or removing MLX Console GUI later means
           moving or removing that one folder.
         </div>
 
@@ -92,7 +92,7 @@ export function SetupPage() {
         {!detected.python && (
           <div className="card small" style={{ borderLeft: '3px solid var(--vscode-editorError-foreground,#f14c4c)' }}>
             No Python 3 was found. Install it first (for example <code>brew install python</code>),
-            then reopen MLX Console.
+            then reopen MLX Console GUI.
           </div>
         )}
         {detected.python && (

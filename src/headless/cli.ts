@@ -25,7 +25,7 @@ import { URL_FILE, createDaemon, loadSettings, metrics, pythonBridge } from './d
 
 const run = promisify(execFile)
 
-const HELP = `mlx-console ${pkg.version} — MLX Console without VS Code
+const HELP = `mlx-console ${pkg.version} — MLX Console GUI without VS Code
 
   mlx-console serve [--port N]   serve the local dashboard (foreground)
                                  --keep-server leaves the model server up on exit
@@ -63,7 +63,7 @@ async function serve(port?: number, keepServer = false): Promise<void> {
   }
 
   if (process.stdout.isTTY) {
-    console.log(`\n  MLX Console — ${url}\n`)
+    console.log(`\n  MLX Console GUI — ${url}\n`)
     console.log('  Settings: ~/.mlx-console/config.json')
     console.log(
       keepServer
@@ -76,7 +76,7 @@ async function serve(port?: number, keepServer = false): Promise<void> {
     // credential, and under launchd stdout is a 0644 log file, so the link
     // itself stays in the 0600 url file.
     console.log(
-      `MLX Console listening on 127.0.0.1:${new URL(url).port} — run \`mlx-console url\` for the link.`,
+      `MLX Console GUI listening on 127.0.0.1:${new URL(url).port} — run \`mlx-console url\` for the link.`,
     )
   }
 

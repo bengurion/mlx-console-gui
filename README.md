@@ -1,4 +1,4 @@
-# MLX Console
+# MLX Console GUI
 
 **Run large language models locally on your Mac — and see what they actually cost.**
 
@@ -7,7 +7,7 @@
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 <!-- /tabs -->
 
-MLX Console is a front end for [mlx-lm](https://github.com/ml-explore/mlx-lm)'s inference
+MLX Console GUI is a front end for [mlx-lm](https://github.com/ml-explore/mlx-lm)'s inference
 server. It starts and supervises `mlx_lm.server`, manages the models that server loads, and
 tells you honestly what those models cost in memory — before they take your machine down
 with them.
@@ -23,7 +23,7 @@ another for `huggingface-cli`, a browser tab open on the Hub trying to work out 
 ## One system, three front ends
 
 The same core ships three ways: the **desktop app** (wraps the headless daemon in a Chromium
-window — the primary way to run MLX Console, see [Install](#install)), the **VS Code
+window — the primary way to run MLX Console GUI, see [Install](#install)), the **VS Code
 extension**, and the **CLI**. Pick any, or run several — they cooperate rather than compete:
 whichever starts the server, the others adopt it.
 
@@ -112,7 +112,7 @@ accounting at any privilege level, so "held by other apps" is inferred, not meas
 ```mermaid
 sequenceDiagram
     participant You
-    participant Console as MLX Console
+    participant Console as MLX Console GUI
     participant Server as mlx_lm.server
     participant Mem as Unified memory
 
@@ -198,14 +198,14 @@ it through `~/.mlx-console/app.json` and become clients of the same daemon.
 ```bash
 npm install
 npm run app:dev        # run the app from source
-npm run app:package    # build release/MLX Console-<version>-arm64.dmg (unsigned)
+npm run app:package    # build release/MLX Console GUI-<version>-arm64.dmg (unsigned)
 ```
 
 These dev builds are unsigned, so a downloaded DMG is quarantined by
 Gatekeeper. Either right-click the app → Open (twice, the first time), or:
 
 ```bash
-xattr -dr com.apple.quarantine "/Applications/MLX Console.app"
+xattr -dr com.apple.quarantine "/Applications/MLX Console GUI.app"
 ```
 
 Locally built (not downloaded) apps carry no quarantine flag and open
@@ -230,7 +230,7 @@ Then install the packaged extension and reload the window:
 code --install-extension mlx-console-gui-0.0.23.vsix --force
 ```
 
-Open the **MLX Console** icon in the activity bar afterwards.
+Open the **MLX Console GUI** icon in the activity bar afterwards.
 
 How it behaves depends on whether the desktop app is installed (`mlxConsole.mode`,
 default `auto`):
@@ -605,7 +605,7 @@ the only Electron-specific code; everything else is shared.
 ```bash
 npm run app:dev        # compile all bundles, then launch Electron from source
 npm run app:package    # production esbuild + electron-builder
-                       # → release/MLX Console-<version>-arm64.dmg (and .zip)
+                       # → release/MLX Console GUI-<version>-arm64.dmg (and .zip)
 ```
 
 What to know before it surprises you:
@@ -678,7 +678,7 @@ Apple or Hugging Face.
 ## License
 
 [Elastic License 2.0](https://www.elastic.co/licensing/elastic-license) — free to use, copy,
-modify and redistribute; what you may not do is offer MLX Console to others as a hosted or
+modify and redistribute; what you may not do is offer MLX Console GUI to others as a hosted or
 managed service, or strip the licensing from it. The full text is in the `LICENSE` file at
 the repository root.
 

@@ -76,7 +76,7 @@ export async function discover(configuredUrl?: string): Promise<DaemonEndpoint |
   return undefined
 }
 
-export const APP_PATH = '/Applications/MLX Console.app'
+export const APP_PATH = '/Applications/MLX Console GUI.app'
 
 export function appInstalled(): boolean {
   return fs.existsSync(APP_PATH)
@@ -85,6 +85,6 @@ export function appInstalled(): boolean {
 /** Start the desktop app without stealing focus; resolves once `open` returns. */
 export function launchApp(): Promise<boolean> {
   return new Promise((resolve) => {
-    execFile('open', ['-a', 'MLX Console', '--background'], (err) => resolve(!err))
+    execFile('open', ['-a', 'MLX Console GUI', '--background'], (err) => resolve(!err))
   })
 }

@@ -399,7 +399,7 @@ function appShell(args: { nonce: string; token: string; label: string; view: str
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<title>MLX Console</title>
+<title>MLX Console GUI</title>
 <script nonce="${nonce}">${THEME_INIT_JS}</script>
 <style nonce="${nonce}">
 ${BROWSER_THEME}
@@ -478,7 +478,7 @@ ${BROWSER_UI}
   <aside id="rail">
     <div class="brand">
       <span class="brand-mark" aria-hidden="true">MLX</span>
-      <span class="brand-name">MLX Console</span>
+      <span class="brand-name">MLX Console GUI</span>
       <button id="collapse" class="rail-btn" title="Collapse menu" aria-label="Collapse menu">«</button>
     </div>
     <nav aria-label="Main navigation">${items}</nav>
@@ -628,7 +628,7 @@ function page(token: string, hostLabel: string): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<title>MLX Console</title>
+<title>MLX Console GUI</title>
 <style>
   :root { color-scheme: light dark; --line: #8883; }
   body { font: 14px/1.5 ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 24px;
@@ -650,7 +650,7 @@ function page(token: string, hostLabel: string): string {
   #saved { position: fixed; bottom: 16px; right: 16px; padding: 8px 12px;
            background: #3fb950; color: #000; border-radius: 6px; opacity: 0; transition: opacity .2s }
 </style>
-<h1>MLX Console</h1>
+<h1>MLX Console GUI</h1>
 <div class="muted">Editable dashboard · loopback only · token-authenticated · served by ${hostLabel}</div>
 
 <h2>Server</h2>

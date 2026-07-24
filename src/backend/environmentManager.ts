@@ -215,7 +215,7 @@ export class EnvironmentManager {
   async ensureReady(interactive = true): Promise<boolean> {
     if (!this.platformOk()) {
       if (interactive) {
-        void this.host.reportError?.('MLX Console requires macOS on Apple Silicon (arm64).')
+        void this.host.reportError?.('MLX Console GUI requires macOS on Apple Silicon (arm64).')
       }
       await this.refresh()
       return false
@@ -228,7 +228,7 @@ export class EnvironmentManager {
     if (!sys) {
       if (interactive) {
         await this.host.reportError?.(
-          'MLX Console needs Python 3. Install it (e.g. `brew install python`) or set mlxConsole.pythonPath.',
+          'MLX Console GUI needs Python 3. Install it (e.g. `brew install python`) or set mlxConsole.pythonPath.',
           'Open Settings',
         )
       }
@@ -237,7 +237,7 @@ export class EnvironmentManager {
 
     if (interactive && this.host.confirm) {
       const proceed = await this.host.confirm(
-        'MLX Console will create a Python virtual environment and install mlx-lm.',
+        'MLX Console GUI will create a Python virtual environment and install mlx-lm.',
         `Python: ${sys.version}\nLocation: ${this.managedVenvDir}`,
         'Install',
       )
@@ -249,7 +249,7 @@ export class EnvironmentManager {
       (async <T,>(_title: string, task: (report: (m: string) => void) => Promise<T>) =>
         task((m) => log.info(m)))
 
-    return withProgress('MLX Console setup', async (report) => {
+    return withProgress('MLX Console GUI setup', async (report) => {
         try {
           this.activeVenvDir = this.managedVenvDir
           await fs.promises.mkdir(path.dirname(this.managedVenvDir), { recursive: true })
@@ -261,7 +261,7 @@ export class EnvironmentManager {
             if (v.code !== 0 || !this.venvExists()) {
               log.error('venv creation failed', v.stderr)
               void this.host.reportError?.(
-                'Failed to create the Python virtual environment. See MLX Console logs.',
+                'Failed to create the Python virtual environment. See MLX Console GUI logs.',
               )
               log.show()
               return false
@@ -282,20 +282,20 @@ export class EnvironmentManager {
           })
           if (i.code !== 0) {
             log.error('mlx-lm install failed', i.stderr)
-            void this.host.reportError?.('Failed to install mlx-lm. See MLX Console logs.')
+            void this.host.reportError?.('Failed to install mlx-lm. See MLX Console GUI logs.')
             log.show()
             return false
           }
 
           await this.refresh()
           if (this._status.ready) {
-            this.host.reportInfo?.(`MLX Console ready — mlx-lm ${this._status.mlxVersion}.`)
+            this.host.reportInfo?.(`MLX Console GUI ready — mlx-lm ${this._status.mlxVersion}.`)
             return true
           }
           return false
         } catch (err) {
           log.error('setup error', err)
-          void this.host.reportError?.('MLX Console setup failed. See MLX Console logs.')
+          void this.host.reportError?.('MLX Console GUI setup failed. See MLX Console GUI logs.')
           log.show()
           return false
         }

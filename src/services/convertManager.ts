@@ -132,7 +132,7 @@ export class ConvertManager {
         options: [],
         error:
           `This is a "${arch.modelType}" model — an architecture mlx-lm does not implement, so the ` +
-          'converted weights would have nothing to run them. MLX Console serves text-generation ' +
+          'converted weights would have nothing to run them. MLX Console GUI serves text-generation ' +
           'models (llama, qwen, gemma, gpt-oss, …); other model kinds need their own runtime.',
       }
     }

@@ -84,7 +84,7 @@ export async function activate(context: vscode.ExtensionContext) {
   // reads a setting.
   setSettingsSource(new VsCodeSettings())
   if (runtimeMode() === 'remote') return activateRemote(context)
-  log.info('MLX Console activating')
+  log.info('MLX Console GUI activating')
   carryStorageAcrossRename(context)
 
   const env = new EnvironmentManager(vscodeEnvHost(context))
@@ -311,7 +311,7 @@ export async function activate(context: vscode.ExtensionContext) {
     void maybeOnboard(context, env, s)
   })
 
-  log.info('MLX Console activated')
+  log.info('MLX Console GUI activated')
 }
 
 /**
@@ -321,7 +321,7 @@ export async function activate(context: vscode.ExtensionContext) {
  * server state to find the running model server.
  */
 async function activateRemote(context: vscode.ExtensionContext): Promise<void> {
-  log.info('MLX Console activating (remote — the MLX Console app owns the runtime)')
+  log.info('MLX Console GUI activating (remote — the MLX Console GUI app owns the runtime)')
   const configuredUrl = () =>
     vscode.workspace.getConfiguration('mlxConsole').get<string>('daemonUrl', '')
 
@@ -373,7 +373,7 @@ async function activateRemote(context: vscode.ExtensionContext): Promise<void> {
 
   const offerLaunch = async () => {
     const pick = await vscode.window.showInformationMessage(
-      'The MLX Console app is not running.',
+      'The MLX Console GUI app is not running.',
       ...(appInstalled() ? ['Launch it'] : []),
     )
     if (pick === 'Launch it') void launchApp()
@@ -396,7 +396,7 @@ async function activateRemote(context: vscode.ExtensionContext): Promise<void> {
     }),
     vscode.commands.registerCommand('mlxConsole.setup', () =>
       vscode.window.showInformationMessage(
-        'Setup lives in the MLX Console app now — open it to install or repair the environment.',
+        'Setup lives in the MLX Console GUI app now — open it to install or repair the environment.',
       ),
     ),
     vscode.commands.registerCommand('mlxConsole.showLogs', () => log.show()),
@@ -455,7 +455,7 @@ async function activateRemote(context: vscode.ExtensionContext): Promise<void> {
 
   void env.refresh().then((s) => statusBar.setEnv(s))
   if (!(await discover(configuredUrl()))) void offerLaunch()
-  log.info('MLX Console activated (remote)')
+  log.info('MLX Console GUI activated (remote)')
 }
 
 async function maybeOnboard(
@@ -466,7 +466,7 @@ async function maybeOnboard(
   if (!status.platformOk || status.ready) return
   if (context.globalState.get<boolean>('mlxConsole.onboarded')) return
   const pick = await vscode.window.showInformationMessage(
-    'MLX Console needs a one-time setup (a Python environment + mlx-lm). Set it up now?',
+    'MLX Console GUI needs a one-time setup (a Python environment + mlx-lm). Set it up now?',
     'Run setup',
     'Later',
     "Don't ask again",
@@ -480,7 +480,7 @@ async function maybeOnboard(
 }
 
 export function deactivate() {
-  log.info('MLX Console deactivating')
+  log.info('MLX Console GUI deactivating')
 }
 
 async function showMenu(env: EnvironmentManager, server: ServerManager) {
@@ -496,7 +496,7 @@ async function showMenu(env: EnvironmentManager, server: ServerManager) {
     { id: 'test', label: '$(comment-discussion) Test completion (dev)' },
     { id: 'logs', label: '$(output) Show logs' },
   ]
-  const pick = await vscode.window.showQuickPick(items, { placeHolder: 'MLX Console' })
+  const pick = await vscode.window.showQuickPick(items, { placeHolder: 'MLX Console GUI' })
   if (!pick) return
   switch (pick.id) {
     case 'setup':

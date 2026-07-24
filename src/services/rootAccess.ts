@@ -85,7 +85,7 @@ export function sudoersEscape(arg: string): string {
 
 export function sudoersRule(user: string, command: string[] = sampleCommand()): string {
   return [
-    '# Installed by MLX Console so per-process GPU sampling can run unattended.',
+    '# Installed by MLX Console GUI so per-process GPU sampling can run unattended.',
     '# Grants exactly one read-only telemetry command. Delete this file to revoke,',
     '# or use Disable in the Dashboard view.',
     `${user} ALL=(root) NOPASSWD: ${command.map(sudoersEscape).join(' ')}`,

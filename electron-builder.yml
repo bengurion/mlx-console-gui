@@ -1,7 +1,7 @@
 # Unsigned dev builds of the desktop app. Signing/notarization is a later,
 # deliberate step — see the README's Gatekeeper note for running these.
 appId: dev.mlx-console.app
-productName: MLX Console
+productName: MLX Console GUI
 directories:
   output: release
 # vsce reads "main" as dist/extension.js; the app's entry is set here instead

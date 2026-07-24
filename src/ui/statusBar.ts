@@ -49,7 +49,7 @@ export class StatusBar {
   private render() {
     let icon = '$(chip)'
     let text = 'MLX'
-    let tooltip = 'MLX Console — click for actions'
+    let tooltip = 'MLX Console GUI — click for actions'
 
     if (this.env && !this.env.ready) {
       icon = '$(warning)'

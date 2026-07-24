@@ -153,7 +153,7 @@ export function SystemStatus() {
         <div className="small muted">{env?.message}</div>
         {/* env.message already names the mlx-lm version, so show the extension
             version here rather than repeating it. */}
-        <div className="small muted">MLX Console {env?.extensionVersion ?? '…'}</div>
+        <div className="small muted">MLX Console GUI {env?.extensionVersion ?? '…'}</div>
         {!env?.ready && env?.platformOk && (
           <button disabled={busy} onClick={() => call('runSetup')}>
             Install / update mlx-lm

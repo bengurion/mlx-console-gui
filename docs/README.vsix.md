@@ -1,8 +1,8 @@
-# MLX Console
+# MLX Console GUI
 
 **Run local LLMs on Apple Silicon from VS Code — models, memory and chat, without leaving the editor.**
 
-MLX Console drives [mlx-lm](https://github.com/ml-explore/mlx-lm)'s inference server: download
+MLX Console GUI drives [mlx-lm](https://github.com/ml-explore/mlx-lm)'s inference server: download
 and convert models, load them, watch what they actually cost in unified memory, and use them
 in VS Code chat.
 
@@ -19,7 +19,7 @@ in VS Code chat.
 
 ## Two ways to run
 
-- **With the MLX Console desktop app** (recommended): the app owns the runtime — Python
+- **With the MLX Console GUI desktop app** (recommended): the app owns the runtime — Python
   environment, models, server — and this extension connects to it automatically. Nothing to
   set up in the editor.
 - **Without the app**: the extension manages everything itself. First run offers a one-time
@@ -37,6 +37,6 @@ discovery would not find on its own.
   token from each model's own config, and live pressure.
 
 Full documentation, the desktop app and the CLI live in the
-[MLX Console repository](https://github.com/bengurion/mlx-console).
+[MLX Console GUI repository](https://github.com/bengurion/mlx-console).
 
 Licensed under the [Elastic License 2.0](https://www.elastic.co/licensing/elastic-license).

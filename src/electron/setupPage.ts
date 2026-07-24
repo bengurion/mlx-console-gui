@@ -19,7 +19,7 @@ export function setupHtml(bundleFileUrl: string): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>MLX Console Setup</title>
+<title>MLX Console GUI Setup</title>
 <script>${THEME_INIT_JS}</script>
 <style>
 ${BROWSER_THEME}

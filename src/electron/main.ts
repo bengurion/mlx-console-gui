@@ -1,5 +1,5 @@
 /**
- * MLX Console as a desktop app.
+ * MLX Console GUI as a desktop app.
  *
  * The main process is the third host after VSCode and the terminal: it runs
  * the same daemon in-process (`createDaemon`) and points a Chromium window at
@@ -118,7 +118,7 @@ function createWindow(): BrowserWindow {
     height: 800,
     minWidth: 720,
     minHeight: 480,
-    title: 'MLX Console',
+    title: 'MLX Console GUI',
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -320,7 +320,7 @@ async function bootRun(): Promise<void> {
   })
   const url = await daemon.start()
   if (!url) {
-    dialog.showErrorBox('MLX Console', 'Could not serve the dashboard on any port.')
+    dialog.showErrorBox('MLX Console GUI', 'Could not serve the dashboard on any port.')
     app.exit(1)
     return
   }
