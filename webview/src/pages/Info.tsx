@@ -44,11 +44,18 @@ type Tab = { label: string; html: { __html: string } }
 function buildTabs(md: string): Tab[] {
   const parts: { title: string; lines: string[] }[] = [{ title: 'Overview', lines: [] }]
   let inFence = false
+  let inTabBar = false
   for (const line of md.split('\n')) {
     if (/^\s*```/.test(line)) inFence = !inFence
     // Screenshots ship in the repo, not in this bundle — a broken-image icon
     // of the very page being looked at helps nobody.
     if (!inFence && /^!\[.*\]\(print_screens\//.test(line.trim())) continue
+    // GitHub's stand-in for these very tabs; here the real ones exist.
+    if (!inFence && line.trim() === '<!-- tabs -->') inTabBar = true
+    if (inTabBar) {
+      if (line.trim() === '<!-- /tabs -->') inTabBar = false
+      continue
+    }
     const m = inFence ? null : line.match(/^## +(.+)/)
     if (m) parts.push({ title: m[1].trim(), lines: [line] })
     else parts[parts.length - 1].lines.push(line)

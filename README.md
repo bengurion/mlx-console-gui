@@ -2,11 +2,10 @@
 
 **Run large language models locally on your Mac — and see what they actually cost.**
 
-**[Overview](#one-system-three-front-ends)** · **[Why](#why-this-exists)** ·
-**[What it does](#what-it-does)** · **[Install](#install)** ·
-**[Dashboard](#the-web-dashboard)** · **[Headless](#headless-mode)** ·
-**[API](#calling-the-api)** · **[Configuration](#configuration)** ·
-**[Development](#development)** · **[Settings](#settings-reference)**
+<!-- tabs -->
+| [**Overview**](#one-system-three-front-ends) | [**Why**](#why-this-exists) | [**What it does**](#what-it-does) | [**Install**](#install) | [**Dashboard**](#the-web-dashboard) | [**Headless**](#headless-mode) | [**API**](#calling-the-api) | [**Configuration**](#configuration) | [**Development**](#development) | [**Settings**](#settings-reference) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+<!-- /tabs -->
 
 MLX Console is a front end for [mlx-lm](https://github.com/ml-explore/mlx-lm)'s inference
 server. It starts and supervises `mlx_lm.server`, manages the models that server loads, and
