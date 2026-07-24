@@ -98,7 +98,8 @@ const webviewConfig = {
   target: 'es2020',
   sourcemap: !production,
   minify: production,
-  loader: { '.css': 'css' },
+  // Markdown imports as text: the Info page embeds the README at build time.
+  loader: { '.css': 'css', '.md': 'text' },
   define: { ...define, 'process.env.NODE_ENV': production ? '"production"' : '"development"' },
   logLevel: 'info',
 }

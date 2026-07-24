@@ -21,9 +21,9 @@ export interface PanelHub {
   sampleMetrics(): { dispose(): void }
 }
 
-// `setup` deliberately absent: first-run onboarding belongs to the desktop
-// app; the extension has no such panel.
-const VIEW_IDS: Record<Exclude<ViewId, 'setup'>, string> = {
+// `setup` and `info` deliberately absent: onboarding belongs to the desktop
+// app, and the README ships on the extension page itself.
+const VIEW_IDS: Record<Exclude<ViewId, 'setup' | 'info'>, string> = {
   dashboard: 'mlxConsole.dashboard',
   models: 'mlxConsole.models',
   search: 'mlxConsole.search',

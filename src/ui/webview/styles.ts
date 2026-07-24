@@ -80,6 +80,30 @@ export const STYLES = /* css */ `
      scan. Collapses to one in a narrow panel. */
   .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 28px; align-items: start; }
   @media (max-width: 640px) { .grid-2 { grid-template-columns: 1fr; } }
+
+  /* Rendered markdown (the Info page): a readable measure and quiet chrome. */
+  .prose { max-width: 860px; line-height: 1.6; }
+  .prose h1 { font-size: 1.7em; margin: 0 0 12px; }
+  .prose h2 { font-size: 1.3em; margin: 28px 0 8px; padding-top: 12px;
+              border-top: 1px solid var(--vscode-panel-border); }
+  .prose h3 { font-size: 1.05em; margin: 18px 0 6px; }
+  .prose p, .prose li { max-width: 78ch; }
+  .prose li { margin: 3px 0; }
+  .prose code { background: var(--vscode-textCodeBlock-background, rgba(128,128,128,0.12));
+                border-radius: 4px; padding: 1px 5px; font-size: 0.9em;
+                font-family: var(--vscode-editor-font-family, monospace); }
+  .prose pre { background: var(--vscode-textCodeBlock-background, rgba(128,128,128,0.1));
+               border-radius: 8px; padding: 12px; overflow-x: auto; }
+  .prose pre code { background: none; padding: 0; }
+  .prose blockquote { margin: 10px 0; padding: 6px 12px;
+                      border-left: 3px solid var(--vscode-focusBorder);
+                      color: var(--vscode-descriptionForeground); }
+  .prose table { border-collapse: collapse; width: 100%; font-size: 0.92em; margin: 10px 0; }
+  .prose th, .prose td { border: 1px solid var(--vscode-panel-border); padding: 5px 9px;
+                         text-align: left; vertical-align: top; }
+  .prose th { background: var(--vscode-editorWidget-background); }
+  .prose img { max-width: 100%; }
+  .prose hr { border: none; height: 1px; background: var(--vscode-panel-border); margin: 24px 0; }
   button {
     padding: 4px 10px;
     color: var(--vscode-button-foreground);

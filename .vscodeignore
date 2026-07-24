@@ -11,6 +11,9 @@
 .venv/**
 .vscode/**
 build/**
+# The extension ships the concise docs/README.vsix.md (vsce --readme-path);
+# the full README would land beside it as a case-colliding readme.md.
+README.md
 dist/electron/**
 docs/**
 electron-builder.yml

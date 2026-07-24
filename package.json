@@ -2,13 +2,17 @@
   "name": "mlx-console-gui",
   "displayName": "MLX Console GUI",
   "description": "Run and manage mlx-lm on Apple Silicon: download, convert and serve MLX models, watch GPU and memory use, and drive it from VS Code, a browser, or a headless daemon.",
-  "version": "0.0.19",
+  "version": "0.0.20",
   "publisher": "mlx-console",
   "author": {
     "name": "bengurion",
     "url": "https://github.com/bengurion"
   },
   "license": "Elastic-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bengurion/mlx-console.git"
+  },
   "icon": "resources/icon.png",
   "engines": {
     "vscode": "^1.125.0",
@@ -451,7 +455,7 @@
     "package": "node esbuild.mjs --production",
     "typecheck": "tsc --noEmit",
     "test": "node --test test/*.test.mts",
-    "vsce:package": "npm run sync:readme && npm run package && vsce package --no-dependencies",
+    "vsce:package": "npm run sync:readme && npm run package && vsce package --no-dependencies --readme-path docs/README.vsix.md",
     "sync:readme": "node scripts/sync-readme-version.mjs",
     "app:dev": "npm run compile && env -u ELECTRON_RUN_AS_NODE electron dist/electron/main.cjs",
     "app:package": "npm run package && electron-builder --config electron-builder.yml --mac --arm64"
@@ -465,6 +469,7 @@
     "electron": "^43.2.0",
     "electron-builder": "^26.15.3",
     "esbuild": "^0.28.1",
+    "marked": "^18.0.7",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "typescript": "^7.0.2"

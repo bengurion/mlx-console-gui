@@ -7,6 +7,7 @@ import { DownloadsPage } from './pages/Downloads'
 import { SettingsView } from './pages/SettingsView'
 import { ClientsPage } from './pages/Clients'
 import { DashboardPage } from './pages/Dashboard'
+import { InfoPage } from './pages/Info'
 import { SetupPage } from './pages/Setup'
 import type { ViewId } from '../../src/shared/protocol'
 
@@ -25,6 +26,7 @@ const pages: Record<ViewId, ComponentType> = {
   downloads: DownloadsPage,
   settings: SettingsView,
   clients: ClientsPage,
+  info: InfoPage,
   setup: SetupPage,
 }
 
