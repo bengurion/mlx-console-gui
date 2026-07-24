@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.0.21 — Unreleased
+
+The Info page became a document worth reading, and search numbers are now checked against how the Hub actually counts.
+
+- **Info page reorganised as tabs** — one tab per README section instead of a 700-line scroll, full width like every other page, larger text, and the mermaid architecture and launch diagrams render as real theme-aware SVGs instead of code blocks. The README's own cross-links switch tabs.
+- **Fixed: tab and anchor clicks silently did nothing.** React 19 diffs `dangerouslySetInnerHTML` by object identity, so every re-render reset the section HTML and erased the heading ids and rendered diagrams added after it. The HTML objects are now stable.
+- **Fixed: the dashboard CSP blocked mermaid's styles.** A style nonce makes browsers ignore `'unsafe-inline'`, and mermaid injects `<style>` into its SVGs — styles are now `'unsafe-inline'` while scripts stay nonce-only.
+- **Search filters apply immediately** — scope, size, quant and sort re-search on change instead of waiting for Enter, and a late response from an abandoned query can no longer overwrite a newer one.
+- **Fixed: AWQ/GPTQ/bitsandbytes sizes were off 4–8×** (a 9 GB phi-4 quant showed "53 GB · 113B"). The Hub counts *logical* parameters for quantization_config formats but *stored elements* for MLX packed repos; sizing now branches on which rule the repo follows, verified against the repos' actual file trees.
+- **Quantization detection covers the non-MLX families** — AWQ, GPTQ, NF4, bnb-4bit, GGUF spellings like `Q4_K_M`, mxfp4 (gpt-oss), fp8 and fp32, each with its real bytes-per-parameter. Sub-1B names like "SmolLM2-135M" parse too; "-1M" context suffixes do not count as sizes.
+- **Convert plans use the Hub's exact parameter count** — repos whose names say nothing about size no longer show "size unknown" for every bit width; the name-guess remains the offline fallback.
+- **bf16 is a conversion choice** — the original precision in MLX format, no quantization, output in a `-bf16` directory. Offered first, never recommended over a quantization that fits.
+- **Pre-quantized repos are refused up front** — `mlx_lm.convert` only reads full-precision weights, so an AWQ/GPTQ/bnb repo now says so immediately instead of failing after the hour-long download.
+
 ## 0.0.17 — Unreleased
 
 Everything model-specific is now read from the model itself, and memory advice is measured rather than guessed.
