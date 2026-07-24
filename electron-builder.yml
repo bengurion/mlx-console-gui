@@ -24,7 +24,21 @@ extraResources:
     to: resources/py
 mac:
   category: public.app-category.developer-tools
+  # Unsigned dev builds. To ship signed + notarized (Gatekeeper-clean):
+  #   1. Join the Apple Developer Program; create a "Developer ID Application"
+  #      certificate in Xcode → Settings → Accounts and it lands in your
+  #      keychain.
+  #   2. Delete the `identity: null` line below — electron-builder finds the
+  #      certificate on its own.
+  #   3. Uncomment the four lines after it.
+  #   4. Export APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD (appleid.apple.com →
+  #      App-Specific Passwords) and APPLE_TEAM_ID, then run
+  #      `npm run app:package` — it signs, notarizes and staples in one go.
   identity: null
+  # hardenedRuntime: true
+  # entitlements: build/entitlements.mac.plist
+  # entitlementsInherit: build/entitlements.mac.plist
+  # notarize: true
   target:
     - target: dmg
       arch: [arm64]

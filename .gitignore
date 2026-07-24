@@ -2,10 +2,9 @@ node_modules/
 dist/
 out/
 release/
-build/
+*.vsix
 # Design reference checkout; contains a private registry package.
 app_base_framework/
-*.vsix
 *.log
 .DS_Store
 .venv/
