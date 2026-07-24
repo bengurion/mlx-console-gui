@@ -14,6 +14,7 @@ The Info page became a document worth reading, and search numbers are now checke
 - **bf16 is a conversion choice** — the original precision in MLX format, no quantization, output in a `-bf16` directory. Offered first, never recommended over a quantization that fits.
 - **Pre-quantized repos are refused up front** — `mlx_lm.convert` only reads full-precision weights, so an AWQ/GPTQ/bnb repo now says so immediately instead of failing after the hour-long download.
 - **Pre-quantized cards convert their source** — the Hub records what an AWQ/GPTQ/bnb repo was quantized from, so the button reads "Convert the source…" and plans against that repo (as GGUF cards already did) instead of dead-ending. Conversion progress follows the source id back to the card.
+- **Interrupted downloads survive anything** — verified by killing a download mid-shard: the restart re-covered 1.1 GB of finished bytes in one second using 24 KB of network, because resume lives in hf_xet's local chunk cache. That cache is now sized at 64 GiB (default 10 GB could not hold one large model), transient network failures retry themselves at 5 s / 15 s / 60 s before surfacing, failed or canceled items grow a **Resume** link in Downloads, and the orphaned `.incomplete` files huggingface_hub ≥ 1.x abandons after a kill are swept before each attempt instead of accumulating by the gigabyte.
 
 ## 0.0.17 — Unreleased
 

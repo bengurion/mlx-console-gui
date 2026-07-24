@@ -77,6 +77,11 @@ export function DownloadsPage() {
             {item.state === 'downloading' && (
               <a onClick={() => rpc('cancelDownload', { repo: item.repo })}>Cancel</a>
             )}
+            {(item.state === 'error' || item.state === 'canceled') && (
+              // Completed files are cache hits and partial chunks are kept,
+              // so resuming continues from where it stopped.
+              <a onClick={() => rpc('startDownload', { repo: item.repo })}>Resume</a>
+            )}
           </div>
           {item.state === 'error' && item.message && (
             <div className="small" style={{ color: 'var(--vscode-errorForeground)' }}>

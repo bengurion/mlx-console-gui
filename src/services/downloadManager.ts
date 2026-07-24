@@ -3,6 +3,21 @@ import { log } from '../core/logging'
 import type { PythonHelper } from '../backend/pythonHelper'
 import type { DownloadItem } from '../shared/protocol'
 
+/** A sleep that ends early (rejecting) when the download is canceled. */
+function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    const onAbort = () => {
+      clearTimeout(timer)
+      reject(new Error('aborted'))
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
 /** Tracks Hugging Face model downloads and surfaces progress to the UI. */
 export class DownloadManager {
   private readonly items = new Map<string, DownloadItem>()
@@ -36,8 +51,8 @@ export class DownloadManager {
     this.update(repo, { state: 'downloading', progress: 0, message: 'Starting…' })
     log.info(`Download started: ${repo}`)
 
-    try {
-      await this.helper.download(
+    const attempt = () =>
+      this.helper.download(
         repo,
         (p) => {
           if (p.event === 'start') {
@@ -54,12 +69,30 @@ export class DownloadManager {
         },
         controller.signal,
       )
+
+    try {
+      // Transient network failures are retried here rather than surfaced:
+      // completed files are cache hits and partial bytes resume, so a retry
+      // costs seconds, while an "Error" card at 3 a.m. costs the whole night
+      // of an unattended 100 GB download.
+      const delays = [5_000, 15_000, 60_000]
+      for (let i = 0; ; i++) {
+        try {
+          await attempt()
+          break
+        } catch (err) {
+          if (controller.signal.aborted || i >= delays.length) throw err
+          log.warn(`Download failed, retrying in ${delays[i] / 1000}s: ${repo}`, err)
+          this.update(repo, { message: `Connection lost — retrying in ${delays[i] / 1000}s…` })
+          await abortableDelay(delays[i], controller.signal)
+        }
+      }
       this.update(repo, { state: 'done', progress: 1, message: 'Complete' })
       this._onDidComplete.fire(repo)
       log.info(`Download complete: ${repo}`)
     } catch (err) {
       if (controller.signal.aborted) {
-        this.update(repo, { state: 'canceled', message: 'Canceled' })
+        this.update(repo, { state: 'canceled', message: 'Canceled — partial data is kept for resume' })
       } else {
         this.update(repo, { state: 'error', message: String(err) })
         log.error(`Download failed: ${repo}`, err)

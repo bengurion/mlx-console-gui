@@ -38,6 +38,15 @@ export function mlxProcessEnv(): NodeJS.ProcessEnv {
     env.HF_TOKEN = token
     env.HUGGING_FACE_HUB_TOKEN = token
   }
+
+  // hf_xet's chunk cache is what makes an interrupted download resumable
+  // across process restarts (hub ≥1.x names its .incomplete files per-attempt,
+  // so the partial file itself is never reused). The 10 GB default cannot
+  // cover one large model's weights; 64 GiB covers everything up to a
+  // gpt-oss-120b-8bit. LRU-evicted, so it only fills while downloading.
+  if (!env.HF_XET_CHUNK_CACHE_SIZE_BYTES) {
+    env.HF_XET_CHUNK_CACHE_SIZE_BYTES = String(64 * 1024 ** 3)
+  }
   return env
 }
 

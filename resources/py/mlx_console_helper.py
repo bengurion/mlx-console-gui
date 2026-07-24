@@ -17,6 +17,7 @@ import json
 import os
 import shutil
 import sys
+import time
 
 
 def emit(obj):
@@ -231,6 +232,33 @@ def _repo_cache_dir(repo_id):
     return os.path.join(base, "models--" + repo_id.replace("/", "--"))
 
 
+def _sweep_stale_incompletes(repo_dir, max_age_s=3600):
+    """Delete orphaned partial downloads before starting a fresh attempt.
+
+    huggingface_hub >= 1.x names its temp files `<etag>.<random>.incomplete`,
+    a fresh name per attempt — a killed process's file is never picked up
+    again (resume happens through hf_xet's chunk cache instead), so each
+    interruption of a large shard would otherwise leave gigabytes behind.
+    The age guard keeps a concurrently running attempt's file safe: a live
+    download touches its file constantly.
+    """
+    blobs = os.path.join(repo_dir, "blobs")
+    now = time.time()
+    try:
+        names = os.listdir(blobs)
+    except OSError:
+        return
+    for name in names:
+        if not name.endswith(".incomplete"):
+            continue
+        path = os.path.join(blobs, name)
+        try:
+            if now - os.path.getmtime(path) > max_age_s:
+                os.remove(path)
+        except OSError:
+            pass
+
+
 def download(repo_id):
     import threading
 
@@ -267,6 +295,7 @@ def download(repo_id):
             emit(payload)
 
     repo_dir = _repo_cache_dir(repo_id)
+    _sweep_stale_incompletes(repo_dir)
 
     def watch():
         while not stop.wait(1.0):
