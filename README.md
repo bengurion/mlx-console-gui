@@ -20,18 +20,18 @@ window — the primary way to run MLX Console, see [Install](#install)), the **V
 extension**, and the **CLI**. Pick any, or run several — they cooperate rather than compete:
 whichever starts the server, the others adopt it.
 
-| | **VS Code extension** (`.vsix`) | **Headless daemon** (`mlx-console`) |
-| --- | --- | --- |
-| **You get** | Activity-bar panels + the chat provider and `@mlx` participant | The same UI in a browser, plus terminal commands |
-| **Needs** | VS Code 1.125+ running | Nothing but Node and a venv with mlx-lm |
-| **Interface** | Native panels, or the same UI in a browser (on by default) | The same UI + `status` / `start` / `stop` |
-| **Dashboard auth** | Cross-site refused; token optional | Same |
-| **Runs at login** | No — dies with the editor | Yes, via launchd |
-| **Settings** | VS Code settings (`mlxConsole.*`) | `~/.mlx-console/config.json` |
+| | **Desktop app** (`.dmg`) | **VS Code extension** (`.vsix`) | **CLI** (`mlx-console`) |
+| --- | --- | --- | --- |
+| **Role** | Owns the runtime: venv, models, daemon, the GUI | Editor integration: chat provider, `@mlx` participant, panels | Terminal commands + run-at-login |
+| **The UI** | The dashboard, in its own window | Panels mirror the app's daemon — the extension ships no runtime of its own once the app is installed | The same dashboard, in your browser |
+| **Needs** | macOS on Apple Silicon | VS Code 1.125+ (and ideally the app) | Node + the app's install, or its own venv |
+| **Runs at login** | Optional (daemon keeps serving with the window closed) | No — dies with the editor | Yes, via launchd |
+| **Settings** | `<install root>/config.json` — the source of truth | Client-only keys (`mode`, `daemonUrl`) | The same root config |
 
 > [!NOTE]
-> Both are built from this one repo. `npm run vsce:package` produces the `.vsix`; the CLI is
-> bundled inside it as `dist/cli.js` and also runs straight from a clone.
+> All three are built from this one repo. Without the app installed, the extension falls back
+> to **embedded mode** and manages the venv and servers itself, exactly as it did before the
+> desktop app existed — `mlxConsole.mode` forces either behaviour.
 
 ### How it fits together
 
