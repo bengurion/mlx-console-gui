@@ -105,6 +105,17 @@ test('an unknown parameter count offers every width rather than refusing', () =>
   assert.equal(plan.error, undefined)
 })
 
+test('an architecture mlx-lm does not implement is refused before the download', () => {
+  const { convert } = harness()
+  // chronos-2 reports model_type "t5": readable safetensors, no MLX runtime.
+  const plan = convert.plan('amazon/chronos-2', 0.12, { modelType: 't5', supported: false })
+  assert.deepEqual(plan.options, [])
+  assert.match(plan.error ?? '', /"t5".*does not implement/)
+  // An unanswerable check (env not ready, config missing) must not refuse.
+  const open = convert.plan('amazon/chronos-2', 0.12, { modelType: 't5', supported: undefined })
+  assert.ok(open.options.length > 0)
+})
+
 test("the Hub's exact parameter count beats the repo-name guess", () => {
   const { convert } = harness()
   // A name that says nothing about size, sized by safetensors.total instead.
@@ -129,8 +140,13 @@ test('conversion runs mlx_lm.convert and reports progress from its output', asyn
   // and configs, then refuses to save because the snapshot is incomplete.
   assert.deepEqual(downloaded, ['Qwen/Qwen2.5-Coder-7B-Instruct'])
 
-  assert.equal(spawned[0].bin, '/venv/bin/mlx_lm.convert')
+  // `python -m`, not bin/mlx_lm.convert: pip bakes the venv's absolute path
+  // into its launcher scripts, and a migrated venv leaves them broken (126).
+  assert.equal(spawned[0].bin, '/venv/bin/python')
   assert.deepEqual(spawned[0].args, [
+    '-m',
+    'mlx_lm',
+    'convert',
     '--hf-path',
     'Qwen/Qwen2.5-Coder-7B-Instruct',
     '--mlx-path',
@@ -164,6 +180,9 @@ test('bf16 converts without quantizing and names the output accordingly', async 
   const res = await convert.start('Qwen/Qwen2.5-7B', 16)
   assert.deepEqual(res, { ok: true })
   assert.deepEqual(spawned[0].args, [
+    '-m',
+    'mlx_lm',
+    'convert',
     '--hf-path',
     'Qwen/Qwen2.5-7B',
     '--mlx-path',

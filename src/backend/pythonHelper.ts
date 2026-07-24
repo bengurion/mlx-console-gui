@@ -91,6 +91,17 @@ export class PythonHelper {
     return { processes: res.processes ?? [], disk: res.disk }
   }
 
+  /** Whether mlx-lm implements this architecture — mlx-lm itself answers. */
+  async archSupported(modelType: string): Promise<boolean> {
+    const res = await this.runJson<{ ok: boolean; supported?: boolean; error?: string }>([
+      'arch',
+      '--model-type',
+      modelType,
+    ])
+    if (!res.ok) throw new Error(res.error ?? 'arch check failed')
+    return res.supported === true
+  }
+
   /** Streams NDJSON progress; resolves on 'done', rejects on 'error' or abort. */
   download(
     repo: string,

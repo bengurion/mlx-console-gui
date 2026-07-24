@@ -555,10 +555,21 @@ export class WebviewHub {
       }
       case 'getMachine':
         return this.machine()
-      case 'getConvertPlan':
+      case 'getConvertPlan': {
         // The Hub's exact parameter count beats parsing "7B" out of the name;
         // cached after the first ask, and the name-guess remains the fallback.
-        return this.deps.convert.plan(repoOf(), await this.deps.hf.getParamsB(repoOf()))
+        const repo = repoOf()
+        const [paramsB, modelType] = await Promise.all([
+          this.deps.hf.getParamsB(repo),
+          this.deps.hf.getModelType(repo),
+        ])
+        // mlx-lm itself answers whether the architecture exists; unanswerable
+        // (env not ready, config missing) means no gate rather than a refusal.
+        const supported = modelType
+          ? await this.deps.cache.archSupported(modelType).catch(() => undefined)
+          : undefined
+        return this.deps.convert.plan(repo, paramsB, { modelType, supported })
+      }
       case 'convertModel': {
         const { repo, bits } = params as { repo: string; bits?: number }
         return this.deps.convert.start(repo, bits)

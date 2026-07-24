@@ -113,9 +113,29 @@ export class ConvertManager {
    * approximate, and a repo whose size is unknown still offers every bit
    * width rather than refusing.
    */
-  plan(repo: string, exactParamsB?: number): ConvertPlan {
+  plan(
+    repo: string,
+    exactParamsB?: number,
+    arch?: { modelType?: string; supported?: boolean },
+  ): ConvertPlan {
     const budgetBytes = this.budgetBytes()
     const totalBytes = os.totalmem()
+
+    // Converting is format translation, not architecture implementation: a
+    // repo whose model_type mlx-lm has no module for would convert cleanly
+    // into weights nothing can run. Refused before the download, not after.
+    if (arch?.supported === false) {
+      return {
+        repo,
+        budgetBytes,
+        totalBytes,
+        options: [],
+        error:
+          `This is a "${arch.modelType}" model — an architecture mlx-lm does not implement, so the ` +
+          'converted weights would have nothing to run them. MLX Console serves text-generation ' +
+          'models (llama, qwen, gemma, gpt-oss, …); other model kinds need their own runtime.',
+      }
+    }
 
     if (isGguf(repo)) {
       return {
@@ -253,11 +273,15 @@ export class ConvertManager {
       this.aborts.delete(repo)
     }
 
-    const bin = this.env.binPath('mlx_lm.convert')
-    const args =
+    // `python -m`, never the venv's bin/mlx_lm.convert launcher: pip bakes the
+    // venv's absolute path into those scripts, so a migrated venv leaves them
+    // pointing at a python that no longer exists (exit 126).
+    const bin = this.env.binPath('python')
+    const convertArgs =
       chosen === BF16_BITS
         ? ['--hf-path', repo, '--mlx-path', outPath, '--dtype', 'bfloat16']
         : ['--hf-path', repo, '--mlx-path', outPath, '-q', '--q-bits', String(chosen), '--q-group-size', '64']
+    const args = ['-m', 'mlx_lm', 'convert', ...convertArgs]
     log.info(`Converting: ${bin} ${args.join(' ')}`)
     this.update(repo, {
       state: 'converting',

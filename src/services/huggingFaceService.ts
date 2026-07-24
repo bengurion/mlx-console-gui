@@ -174,6 +174,32 @@ export class HuggingFaceService {
     return this.paramsCache.get(repo)
   }
 
+  private readonly typeCache = new Map<string, string | undefined>()
+
+  /**
+   * The repo's `model_type` from its config.json — what mlx-lm dispatches on.
+   * The convert plan checks it against mlx-lm's registry before the download,
+   * because "safetensors present" only means the weights are readable, not
+   * that any MLX runtime exists for them.
+   */
+  async getModelType(repo: string): Promise<string | undefined> {
+    if (this.typeCache.has(repo)) return this.typeCache.get(repo)
+    let type: string | undefined
+    try {
+      const res = await fetch(`https://huggingface.co/${repo}/raw/main/config.json`, {
+        headers: this.headers(),
+      })
+      if (res.ok) {
+        const json = (await res.json()) as { model_type?: string }
+        type = typeof json.model_type === 'string' ? json.model_type : undefined
+      }
+    } catch (err) {
+      log.warn(`getModelType(${repo}) failed`, err)
+    }
+    this.typeCache.set(repo, type)
+    return type
+  }
+
   /** One fetch fills both caches: bytes and parameter count share a response. */
   private async fetchModelInfo(repo: string): Promise<void> {
     try {

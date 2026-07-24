@@ -346,10 +346,15 @@ export class ServerManager {
     }
 
     this.setState('starting')
-    const bin = this.env.binPath('mlx_lm.server')
+    // `python -m mlx_lm.server`, never the venv's bin/mlx_lm.server launcher:
+    // pip bakes the venv's absolute path into those scripts, so a migrated or
+    // relocated venv leaves them pointing at a python that no longer exists
+    // (exit 126). The module form keeps "mlx_lm.server" in the command line,
+    // which the pgrep-based process matching depends on.
+    const bin = this.env.binPath('python')
     // Shared with the headless CLI so the two cannot start the same server
     // with different flags.
-    const args = buildServerArgs({
+    const serverArgs = buildServerArgs({
       bindHost: Config.bindHost(),
       port: Config.serverPort(),
       promptCacheSize: Config.promptCacheSize(),
@@ -361,6 +366,7 @@ export class ServerManager {
       numDraftTokens: Config.numDraftTokens(),
       extraArgs: Config.serverExtraArgs(),
     })
+    const args = ['-m', 'mlx_lm.server', ...serverArgs]
     log.info(`Starting mlx_lm.server: ${bin} ${args.join(' ')}`)
 
     try {

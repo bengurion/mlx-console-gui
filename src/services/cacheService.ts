@@ -16,4 +16,8 @@ export class CacheService {
   top(): Promise<TopInfo> {
     return this.helper.top()
   }
+
+  archSupported(modelType: string): Promise<boolean> {
+    return this.helper.archSupported(modelType)
+  }
 }

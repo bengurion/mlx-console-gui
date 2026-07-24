@@ -252,6 +252,29 @@ def top():
     emit(out)
 
 
+def arch(model_type):
+    """Whether mlx-lm implements this architecture, answered by mlx-lm itself.
+
+    Resolution is exactly what mlx_lm.utils.load does — remap, then import the
+    model module — so this cannot drift from what a conversion could actually
+    produce. Asked before the multi-gigabyte download, not after it.
+    """
+    import importlib
+
+    try:
+        try:
+            from mlx_lm.utils import MODEL_REMAPPING
+        except ImportError:
+            MODEL_REMAPPING = {}
+        name = MODEL_REMAPPING.get(model_type, model_type)
+        importlib.import_module(f"mlx_lm.models.{name}")
+        emit({"ok": True, "supported": True})
+    except ImportError:
+        emit({"ok": True, "supported": False})
+    except Exception as exc:  # noqa: BLE001
+        emit({"ok": False, "error": str(exc)})
+
+
 def _repo_cache_dir(repo_id):
     """Where this repo's bytes land while hf_hub_download runs."""
     try:
@@ -367,6 +390,8 @@ def main():
     dl = sub.add_parser("download")
     dl.add_argument("--repo", required=True)
     sub.add_parser("top")
+    ar = sub.add_parser("arch")
+    ar.add_argument("--model-type", required=True)
 
     args = parser.parse_args()
     if args.cmd == "scan":
@@ -377,6 +402,8 @@ def main():
         download(args.repo)
     elif args.cmd == "top":
         top()
+    elif args.cmd == "arch":
+        arch(args.model_type)
     else:
         emit({"ok": False, "error": "unknown command"})
         sys.exit(2)
