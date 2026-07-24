@@ -453,10 +453,14 @@ headroom actually supports.
 **`modelsDir`** — where weights land. Point it somewhere with room, preferably outside your
 project folder; a 120B model at 4-bit is around 60 GB.
 
-**`sampling.*`** — only set these if you disagree with the model. Anything you leave alone
-falls back to the model's own `generation_config.json`, usually tuned better than a global
-default. Disabling values (`topK` 0, `minP` 0, `repetitionPenalty` 1) are omitted from
-requests entirely rather than pinning a sampler you did not ask for.
+**`sampling.*`** — these are **global defaults**, and every one of them can be overridden
+**per model**: open **Models → Settings** on a model's card (or set `modelOverrides`, keyed
+by repo id) and the values you enter there apply only to that model. Precedence per field:
+the model's own override → the model's `generation_config.json` recommendation → these
+defaults. So only set the globals if you disagree with your models in general; a model that
+wants `temperature 0.2` for code is a per-model edit, not a new default for everything.
+Disabling values (`topK` 0, `minP` 0, `repetitionPenalty` 1) are omitted from requests
+entirely rather than pinning a sampler you did not ask for.
 
 **`server.draftModel`** — speculative decoding. The draft must share the target's exact
 tokenizer, so candidates are matched on `vocab_size` rather than by name, and its weights load
