@@ -308,6 +308,7 @@ export interface ConvertItem {
 
 /** One quantization the user can pick, with what it costs. */
 export interface ConvertOption {
+  /** A `--q-bits` value, or 16 for unquantized bf16. */
   bits: number
   recommended: boolean
   /** Estimated weight bytes; absent when the repo id does not name a size. */
@@ -320,7 +321,7 @@ export interface ConvertOption {
 
 export interface ConvertPlan {
   repo: string
-  /** Parameters in billions, parsed from the repo id. */
+  /** Parameters in billions: the Hub's exact count, or parsed from the repo id. */
   paramsB?: number
   budgetBytes: number
   totalBytes: number

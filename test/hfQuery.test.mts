@@ -15,6 +15,19 @@ test('deriveQuant detects quantization from id and tags', () => {
   assert.equal(deriveQuant('org/PlainModel'), undefined)
 })
 
+test('deriveQuant knows the non-MLX quantization families too', () => {
+  // AWQ/GPTQ/NF4 are 4-bit; sizing them at bf16 quadrupled their estimates.
+  assert.equal(deriveQuant('TheBloke/Llama-2-7B-AWQ'), '4bit')
+  assert.equal(deriveQuant('org/Model-GPTQ'), '4bit')
+  assert.equal(deriveQuant('unsloth/llama-3-8b-bnb-4bit'), '4bit')
+  // GGUF spellings: the underscore in Q4_K_M defeats a plain word boundary.
+  assert.equal(deriveQuant('TheBloke/model-GGUF', ['Q4_K_M']), '4bit')
+  assert.equal(deriveQuant('org/model.Q8_0.gguf'), '8bit')
+  // mxfp4 is 4-bit-shaped but block-scaled, so it keeps its own label.
+  assert.equal(deriveQuant('openai/gpt-oss-20b', ['mxfp4']), 'mxfp4')
+  assert.equal(deriveQuant('org/Model-FP8'), 'fp8')
+})
+
 test('mapSort maps the UI keys to HF sort fields', () => {
   assert.equal(mapSort('trending'), 'trendingScore')
   assert.equal(mapSort('downloads'), 'downloads')

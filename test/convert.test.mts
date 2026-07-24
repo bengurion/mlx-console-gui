@@ -66,10 +66,11 @@ test('the quantization choices are data, not a menu', () => {
   assert.equal(plan.paramsB, 7)
   assert.deepEqual(
     plan.options.map((o) => o.bits),
-    [8, 6, 4, 3, 2],
+    [16, 8, 6, 4, 3, 2],
   )
   const recommended = plan.options.filter((o) => o.recommended)
   assert.equal(recommended.length, 1, 'exactly one is recommended')
+  assert.notEqual(recommended[0].bits, 16, 'bf16 is offered, never recommended')
   // Every option carries enough to render without a second round trip.
   for (const o of plan.options) {
     assert.ok(o.summary.length > 0)
@@ -87,7 +88,7 @@ test('a repo that cannot be converted says so instead of offering choices', () =
 test('a model too big even at 2-bit is still convertible, with a warning', () => {
   const { convert } = harness()
   const plan = convert.plan('meta-llama/Llama-3.1-4000B') // absurd on purpose
-  assert.equal(plan.options.length, 5, 'the choices remain; it is the machine that is small')
+  assert.equal(plan.options.length, 6, 'the choices remain; it is the machine that is small')
   assert.match(plan.error ?? '', /does not fit/)
   assert.equal(
     plan.options.some((o) => o.recommended),
@@ -100,8 +101,19 @@ test('an unknown parameter count offers every width rather than refusing', () =>
   const { convert } = harness()
   const plan = convert.plan('some-org/mystery-model')
   assert.equal(plan.paramsB, undefined)
-  assert.equal(plan.options.length, 5)
+  assert.equal(plan.options.length, 6)
   assert.equal(plan.error, undefined)
+})
+
+test("the Hub's exact parameter count beats the repo-name guess", () => {
+  const { convert } = harness()
+  // A name that says nothing about size, sized by safetensors.total instead.
+  const plan = convert.plan('some-org/mystery-model', 7.615616512)
+  assert.equal(plan.paramsB, 7.62, 'rounded for display, not shown raw')
+  for (const o of plan.options) {
+    assert.ok(o.estBytes, `${o.bits}-bit has a size estimate`)
+    assert.notEqual(o.summary, 'size unknown')
+  }
 })
 
 test('conversion runs mlx_lm.convert and reports progress from its output', async () => {
@@ -141,6 +153,24 @@ test('conversion runs mlx_lm.convert and reports progress from its output', asyn
   assert.equal(done.state, 'done')
   assert.equal(done.progress, 1)
   assert.ok(seen.length > 2, 'the UI was told each time something changed')
+
+  fs.rmSync(dir, { recursive: true, force: true })
+})
+
+test('bf16 converts without quantizing and names the output accordingly', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mlx-convert-'))
+  const { convert, spawned } = harness({ modelsDir: dir })
+
+  const res = await convert.start('Qwen/Qwen2.5-7B', 16)
+  assert.deepEqual(res, { ok: true })
+  assert.deepEqual(spawned[0].args, [
+    '--hf-path',
+    'Qwen/Qwen2.5-7B',
+    '--mlx-path',
+    path.join(dir, 'mlx-converted', 'Qwen2.5-7B-bf16'),
+    '--dtype',
+    'bfloat16',
+  ])
 
   fs.rmSync(dir, { recursive: true, force: true })
 })

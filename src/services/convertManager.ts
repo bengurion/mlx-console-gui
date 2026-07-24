@@ -20,6 +20,7 @@ import { Emitter } from '../core/events.ts'
 import { log } from '../core/logging.ts'
 import { convertedRoot, mlxProcessEnv } from '../util/env.ts'
 import {
+  BF16_BITS,
   CONVERT_BITS,
   bytesForBits,
   chooseQuantBits,
@@ -99,17 +100,20 @@ export class ConvertManager {
   }
 
   outputPath(repo: string, bits: number): string {
-    return path.join(this.outputRoot(), `${repo.split('/').pop()}-${bits}bit`)
+    const suffix = bits === BF16_BITS ? 'bf16' : `${bits}bit`
+    return path.join(this.outputRoot(), `${repo.split('/').pop()}-${suffix}`)
   }
 
   /**
    * The choices, with the consequence of each spelled out.
    *
-   * The parameter count comes from the repo id, which is a guess — "7B" in a
-   * name is a convention, not metadata — so sizes are marked approximate and a
-   * repo that names no size still offers every bit width rather than refusing.
+   * `exactParamsB` is the Hub's `safetensors.total` when the caller has it;
+   * otherwise the count is parsed from the repo id, which is a guess — "7B"
+   * in a name is a convention, not metadata. Either way sizes are marked
+   * approximate, and a repo whose size is unknown still offers every bit
+   * width rather than refusing.
    */
-  plan(repo: string): ConvertPlan {
+  plan(repo: string, exactParamsB?: number): ConvertPlan {
     const budgetBytes = this.budgetBytes()
     const totalBytes = os.totalmem()
 
@@ -123,9 +127,25 @@ export class ConvertManager {
       }
     }
 
-    const paramsB = parseParamsB(repo)
+    // Already-quantized safetensors are just as unconvertible as GGUF, but
+    // fail an hour in — after the full download — instead of up front.
+    if (/\b(awq|gptq|bnb|bitsandbytes)\b/i.test(repo)) {
+      return {
+        repo,
+        budgetBytes,
+        totalBytes,
+        options: [],
+        error:
+          'This repo is already quantized (AWQ/GPTQ/bitsandbytes), and mlx_lm.convert only reads ' +
+          'full-precision weights. Convert the original model it was quantized from instead.',
+      }
+    }
+
+    const paramsB = exactParamsB ?? parseParamsB(repo)
     const recommended = chooseQuantBits(paramsB, budgetBytes)
-    const options = CONVERT_BITS.map((bits) => {
+    // bf16 first: not a quantization, but sometimes exactly what is wanted —
+    // the original precision in a format mlx-lm can load.
+    const options = [BF16_BITS, ...CONVERT_BITS].map((bits) => {
       const estBytes = paramsB ? bytesForBits(paramsB, bits) : undefined
       const fit = estBytes ? explainFit(estBytes, budgetBytes, totalBytes) : undefined
       return {
@@ -135,9 +155,14 @@ export class ConvertManager {
         fit: fit?.verdict ?? ('unknown' as const),
         summary: fit ? `≈ ${formatBytes(estBytes!)} — ${fit.summary}` : 'size unknown',
         detail:
-          bits === recommended
-            ? `Highest quantization that fits ${formatBytes(budgetBytes)} of usable memory.`
-            : (fit?.detail ?? 'The repo id does not say how many parameters this model has.'),
+          bits === BF16_BITS
+            ? ['Original precision — no quantization, just the MLX format.', fit?.detail]
+                .filter(Boolean)
+                .join(' ')
+            : bits === recommended
+              ? `Highest quantization that fits ${formatBytes(budgetBytes)} of usable memory.`
+              : (fit?.detail ??
+                'Neither the Hub nor the repo id says how many parameters this model has.'),
       }
     })
 
@@ -146,12 +171,13 @@ export class ConvertManager {
     const hopeless = paramsB !== undefined && recommended === undefined
     return {
       repo,
-      paramsB,
+      // Rounded for display: an exact count reads as 8.03B, not 8.030261248B.
+      paramsB: paramsB === undefined ? undefined : Math.round(paramsB * 100) / 100,
       budgetBytes,
       totalBytes,
       options,
       error: hopeless
-        ? `~${paramsB}B parameters does not fit ${formatBytes(budgetBytes)} of usable memory even at ` +
+        ? `~${Math.round(paramsB!)}B parameters does not fit ${formatBytes(budgetBytes)} of usable memory even at ` +
           `${CONVERT_BITS.at(-1)}-bit. Converting will succeed; loading it will not.`
         : undefined,
     }
@@ -228,9 +254,16 @@ export class ConvertManager {
     }
 
     const bin = this.env.binPath('mlx_lm.convert')
-    const args = ['--hf-path', repo, '--mlx-path', outPath, '-q', '--q-bits', String(chosen), '--q-group-size', '64']
+    const args =
+      chosen === BF16_BITS
+        ? ['--hf-path', repo, '--mlx-path', outPath, '--dtype', 'bfloat16']
+        : ['--hf-path', repo, '--mlx-path', outPath, '-q', '--q-bits', String(chosen), '--q-group-size', '64']
     log.info(`Converting: ${bin} ${args.join(' ')}`)
-    this.update(repo, { state: 'converting', progress: 0, message: 'Quantizing.' })
+    this.update(repo, {
+      state: 'converting',
+      progress: 0,
+      message: chosen === BF16_BITS ? 'Converting.' : 'Quantizing.',
+    })
 
     const child = this.run(bin, args, mlxProcessEnv())
     this.running.set(repo, child)

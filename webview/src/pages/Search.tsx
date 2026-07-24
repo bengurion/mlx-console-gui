@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { rpc, onPush, openExternal } from '../api'
 import { bytes, count, relativeDate } from '../format'
 import type {
@@ -129,11 +129,16 @@ export function SearchPage() {
     void rpc<MachineProfile>('getMachine').then(setMachine).catch(() => undefined)
   }, [])
 
+  // A filter flipped twice fires two searches; without this, whichever answer
+  // arrives last wins — which may be the stale one.
+  const searchSeq = useRef(0)
   const doSearch = useCallback(async (q: SearchQuery) => {
+    const seq = ++searchSeq.current
     setLoading(true)
     setError(undefined)
     try {
       const found = await rpc<SearchResult>('search', q)
+      if (seq !== searchSeq.current) return
       setResults(found.items)
       setTotal(found.total)
       setTruncated(found.truncated)
@@ -142,16 +147,19 @@ export function SearchPage() {
       // Sizes arrive with the search now — the expanded Hub query carries the
       // safetensors metadata, so the second round of per-repo requests is gone.
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      if (seq === searchSeq.current) setError(e instanceof Error ? e.message : String(e))
     } finally {
-      setLoading(false)
+      if (seq === searchSeq.current) setLoading(false)
     }
   }, [])
 
+  // Filters take effect the moment they change — a select that does nothing
+  // until Enter reads as broken. Text still searches on Enter or the button,
+  // so half-typed queries do not spam the Hub. Covers the initial load too.
   useEffect(() => {
     void doSearch(query)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [query.scope, query.params, query.quant, query.sort, query.mlxCommunity])
 
   const patch = (p: Partial<SearchQuery>) => setQuery((q) => ({ ...q, ...p }))
 
@@ -412,7 +420,7 @@ function ResultCard({
             {plan.repo !== model.id && <strong>{plan.repo}</strong>}{' '}
             {plan.paramsB
               ? `~${plan.paramsB}B parameters · ${bytes(plan.budgetBytes)} usable of ${bytes(plan.totalBytes)}`
-              : 'The repo id does not say how big this model is — sizes below are unknown, not zero.'}
+              : 'Neither the Hub nor the repo name says how big this model is — sizes below are unknown, not zero.'}
           </div>
           {plan.error && (
             <div className="small" style={{ color: 'var(--vscode-editorWarning-foreground)' }}>
@@ -435,7 +443,8 @@ function ResultCard({
               }}
             >
               <span>
-                {o.bits}-bit{o.recommended ? ' · recommended' : ''}
+                {o.bits === 16 ? 'bf16' : `${o.bits}-bit`}
+                {o.recommended ? ' · recommended' : ''}
               </span>
               <span className="small" style={{ color: PLAN_COLOR[o.fit] }}>
                 {' '}

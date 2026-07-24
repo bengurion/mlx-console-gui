@@ -128,6 +128,36 @@ test('a quantized model is measured by its parameters, not its packed elements',
   assert.ok(recovered && recovered > 7 && recovered < 9, `got ${recovered}`)
 
   assert.equal(effectiveParamsB(undefined, undefined, 'org/nothing'), undefined)
+
+  // A repo *named* "-4bit" whose tensors are all floats is mislabelled, not
+  // packed: one element per parameter, so the Hub's count is exact. Guessing
+  // from the name here octupled phi-4 uploads to "113B".
+  assert.equal(
+    effectiveParamsB(14_659_507_200, { F32: 14_659_507_200 }, 'someone/microsoft-phi-4-quantized-4bit', '4bit'),
+    14.6595072,
+  )
+})
+
+test('AWQ/GPTQ/bnb repos are recognised as reporting logical counts', async () => {
+  const { hubCountsLogicalParams, estimateBytesFromParams } = await import('../src/services/modelFit.ts')
+  assert.equal(hubCountsLogicalParams('curiousmind147/microsoft-phi-4-AWQ-4bit-GEMM', ['awq']), true)
+  assert.equal(hubCountsLogicalParams('unsloth/phi-4-unsloth-bnb-4bit'), true)
+  assert.equal(hubCountsLogicalParams('org/Model-GPTQ'), true)
+  // MLX packed repos keep the elements-are-storage interpretation.
+  assert.equal(hubCountsLogicalParams('mlx-community/Qwen2.5-7B-Instruct-4bit', ['mlx']), false)
+  // 14.66B logical params at 4-bit is ~9 GB, not the 53 GB of 14.66e9 int32s.
+  const est = estimateBytesFromParams(14.66, '4bit')
+  assert.ok(est > 7e9 && est < 11e9, `got ${est}`)
+})
+
+test('parseParamsB falls back to millions only when no B-count exists', async () => {
+  const { parseParamsB } = await import('../src/services/modelFit.ts')
+  assert.equal(parseParamsB('HuggingFaceTB/SmolLM2-135M-Instruct'), 0.135)
+  assert.equal(parseParamsB('facebook/MobileLLM-350M'), 0.35)
+  // "-1M" is a context window, not 0.001B — the 7B in the name wins.
+  assert.equal(parseParamsB('Qwen/Qwen2.5-7B-Instruct-1M'), 7)
+  // Bare "1M" with no B-count is below the 10M floor: a version, not a size.
+  assert.equal(parseParamsB('org/some-model-1M'), undefined)
 })
 
 test('a size filter never drops a model whose size is unknown', async () => {

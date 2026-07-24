@@ -556,7 +556,9 @@ export class WebviewHub {
       case 'getMachine':
         return this.machine()
       case 'getConvertPlan':
-        return this.deps.convert.plan(repoOf())
+        // The Hub's exact parameter count beats parsing "7B" out of the name;
+        // cached after the first ask, and the name-guess remains the fallback.
+        return this.deps.convert.plan(repoOf(), await this.deps.hf.getParamsB(repoOf()))
       case 'convertModel': {
         const { repo, bits } = params as { repo: string; bits?: number }
         return this.deps.convert.start(repo, bits)

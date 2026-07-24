@@ -19,9 +19,14 @@ export const DTYPE_BYTES: Record<string, number> = {
   U16: 2,
   F8_E4M3: 1,
   F8_E5M2: 1,
+  F8_E8M0: 1,
   I8: 1,
   U8: 1,
   BOOL: 1,
+  // Sub-byte float dtypes (mxfp4 and friends store weights as F4 + E8M0 scales).
+  F6_E2M3: 0.75,
+  F6_E3M2: 0.75,
+  F4: 0.5,
 }
 
 /** Headroom for KV cache, activations and framework overhead on top of weights. */
@@ -46,7 +51,9 @@ export function bytesFromSafetensors(parameters: Record<string, number> | undefi
 
 /**
  * Parse a parameter count in billions out of a model id.
- * Handles "7B", "120b", "0.6b" and mixture-of-experts "8x7B"; ignores "4bit"/"8bit".
+ * Handles "7B", "120b", "0.6b" and mixture-of-experts "8x7B"; ignores
+ * "4bit"/"8bit". Falls back to "135M"-style millions — only when no B-count
+ * exists, so "Qwen2.5-7B-Instruct-1M" reads as 7B, not a 1M context window.
  */
 export function parseParamsB(id: string): number | undefined {
   const s = id.toLowerCase()
@@ -58,7 +65,14 @@ export function parseParamsB(id: string): number | undefined {
   const matches = [...s.matchAll(/(\d+(?:\.\d+)?)\s*b(?!it)/g)]
     .map((m) => parseFloat(m[1]))
     .filter((n) => n > 0 && n < 5000)
-  return matches.length ? Math.max(...matches) : undefined
+  if (matches.length) return Math.max(...matches)
+
+  // 10M is the floor and 1B the ceiling: below that it is a version number,
+  // above it the repo would say "1.3B" — and context lengths ("-1M") stay out.
+  const millions = [...s.matchAll(/(\d+(?:\.\d+)?)\s*m\b/g)]
+    .map((m) => parseFloat(m[1]))
+    .filter((n) => n >= 10 && n < 1000)
+  return millions.length ? Math.max(...millions) / 1000 : undefined
 }
 
 /** Bytes per parameter implied by a quantization label. */
@@ -73,20 +87,31 @@ export function bytesPerParam(quant?: string): number {
     case '6bit':
       return 0.75
     case '8bit':
+    case 'fp8':
       return 1
+    case 'mxfp4':
+      // 4-bit values plus one shared 8-bit scale per 32-element block.
+      return 0.53125
     case 'bf16':
     case 'fp16':
       return 2
+    case 'fp32':
+      return 4
     default:
       return 2
   }
+}
+
+/** Rough weight-size estimate from a known parameter count. */
+export function estimateBytesFromParams(paramsB: number, quant?: string): number {
+  return paramsB * 1e9 * bytesPerParam(quant) * ESTIMATE_OVERHEAD
 }
 
 /** Rough weight-size estimate when exact dtype counts are unavailable. */
 export function estimateBytes(id: string, quant?: string): number | undefined {
   const paramsB = parseParamsB(id)
   if (paramsB === undefined) return undefined
-  return paramsB * 1e9 * bytesPerParam(quant) * ESTIMATE_OVERHEAD
+  return estimateBytesFromParams(paramsB, quant)
 }
 
 /** Memory a model needs at runtime, given its weight bytes. */
@@ -214,6 +239,22 @@ export function paramsBFromSafetensors(total: number | undefined): number | unde
 const PACKED_DTYPES = new Set(['U32', 'I32', 'U16', 'I16', 'U8', 'I8'])
 
 /**
+ * Repos whose integer tensors the Hub counts by *logical* parameters.
+ *
+ * For quantization_config formats — AWQ, GPTQ, bitsandbytes — the Hub's
+ * parser unpacks: a 4-bit phi-4 reports 13.6e9 I32 "elements" where only
+ * 1.7e9 int32s exist on disk (verified against the repos' file trees). So
+ * `total` is the true parameter count, and elements x dtype-width would
+ * overstate the weight bytes four to eight fold — the "53 GB · 113B" cards.
+ * MLX packed repos are the opposite: their U32 counts are storage, and
+ * elements x width is exact.
+ */
+export function hubCountsLogicalParams(id: string, tags: string[] = []): boolean {
+  const hay = (id + ' ' + tags.join(' ')).toLowerCase()
+  return /\b(awq|gptq|autoawq|auto-gptq|bnb|bitsandbytes|compressed-tensors)\b/.test(hay)
+}
+
+/**
  * How many parameters a model really has.
  *
  * The Hub's `safetensors.total` counts stored *elements*, which for a
@@ -225,6 +266,11 @@ const PACKED_DTYPES = new Set(['U32', 'I32', 'U16', 'I16', 'U8', 'I8'])
  * So a packed repo is measured by its name, which for quantized builds is
  * reliable (they are named after the model they quantize), and by the stored
  * bytes only as a fallback.
+ *
+ * The dtypes outrank the name: a repo *called* "-4bit" whose tensors are all
+ * floats stores one element per parameter, so its `total` is exact — a
+ * mislabelled phi-4 upload must read as 14.7B, not have its count octupled
+ * on the theory that it is packed.
  */
 export function effectiveParamsB(
   total: number | undefined,
@@ -234,7 +280,8 @@ export function effectiveParamsB(
 ): number | undefined {
   const dtypes = Object.keys(parameters ?? {}).map((d) => d.toUpperCase())
   const packed = dtypes.some((d) => PACKED_DTYPES.has(d))
-  if (!packed && !quant) return paramsBFromSafetensors(total)
+  const trustTotal = dtypes.length > 0 ? !packed : !quant
+  if (trustTotal) return paramsBFromSafetensors(total)
 
   const named = parseParamsB(id)
   if (named !== undefined) return named
@@ -263,6 +310,13 @@ export function withinParams(
 
 /** Bit widths `mlx_lm.convert --q-bits` accepts, highest quality first. */
 export const CONVERT_BITS = [8, 6, 4, 3, 2]
+
+/**
+ * The no-quantization choice: convert to MLX at the original bf16 precision.
+ * Not in CONVERT_BITS because it is not a `--q-bits` value — it drops `-q`
+ * entirely — and must never be what chooseQuantBits recommends.
+ */
+export const BF16_BITS = 16
 
 /** Estimated weight bytes if a model were quantized to `bits`. */
 export function bytesForBits(paramsB: number, bits: number): number {

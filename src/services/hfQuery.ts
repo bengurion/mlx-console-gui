@@ -72,13 +72,19 @@ export function mapSort(sort: SearchQuery['sort']): string {
 
 export function deriveQuant(id: string, tags?: string[]): string | undefined {
   const hay = (id + ' ' + (tags ?? []).join(' ')).toLowerCase()
-  if (/\b(4[-_ ]?bit|q4|int4)\b/.test(hay)) return '4bit'
-  if (/\b(8[-_ ]?bit|q8|int8)\b/.test(hay)) return '8bit'
-  if (/\b(6[-_ ]?bit)\b/.test(hay)) return '6bit'
-  if (/\b(3[-_ ]?bit)\b/.test(hay)) return '3bit'
-  if (/\b(2[-_ ]?bit)\b/.test(hay)) return '2bit'
+  // mxfp4 before the 4-bit family: it is 4-bit-shaped but sized differently
+  // (block scales), and gpt-oss ships in it.
+  if (/\bmxfp4\b/.test(hay)) return 'mxfp4'
+  // q4 must tolerate GGUF spellings like Q4_K_M, where `_` defeats \b.
+  if (/\b(4[-_ ]?bit|int4|nf4|w4a16|awq|gptq)\b/.test(hay) || /\bi?q4(?!\d)/.test(hay)) return '4bit'
+  if (/\b(8[-_ ]?bit|int8)\b/.test(hay) || /\bq8(?!\d)/.test(hay)) return '8bit'
+  if (/\b(6[-_ ]?bit)\b/.test(hay) || /\bq6(?!\d)/.test(hay)) return '6bit'
+  if (/\b(3[-_ ]?bit)\b/.test(hay) || /\bq3(?!\d)/.test(hay)) return '3bit'
+  if (/\b(2[-_ ]?bit)\b/.test(hay) || /\bq2(?!\d)/.test(hay)) return '2bit'
   if (/\bbf16\b/.test(hay)) return 'bf16'
-  if (/\bfp16\b/.test(hay)) return 'fp16'
+  if (/\b(fp16|f16|float16)\b/.test(hay)) return 'fp16'
+  if (/\bfp8\b/.test(hay)) return 'fp8'
+  if (/\b(fp32|f32|float32)\b/.test(hay)) return 'fp32'
   return undefined
 }
 

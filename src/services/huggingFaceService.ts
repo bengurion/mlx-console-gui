@@ -5,8 +5,11 @@ import {
   bytesFromSafetensors,
   classifyFormat,
   estimateBytes,
+  estimateBytesFromParams,
+  hubCountsLogicalParams,
   isGguf,
   effectiveParamsB,
+  paramsBFromSafetensors,
   withinParams,
 } from './modelFit.ts'
 import type { ModelSummary, SearchQuery, SearchResult } from '../shared/protocol'
@@ -27,6 +30,7 @@ interface HfModel {
 }
 
 interface HfModelInfo {
+  tags?: string[]
   safetensors?: { parameters?: Record<string, number>; total?: number }
 }
 
@@ -58,6 +62,7 @@ const SEARCH_TTL_MS = 60_000
 
 export class HuggingFaceService {
   private readonly sizeCache = new Map<string, number | undefined>()
+  private readonly paramsCache = new Map<string, number | undefined>()
   private readonly searchCache = new Map<string, { at: number; results: SearchResult }>()
   /**
    * Searches currently in flight, so two callers asking the same thing at once
@@ -154,19 +159,45 @@ export class HuggingFaceService {
    * is the only accurate source short of downloading.
    */
   async getModelSize(repo: string): Promise<number | undefined> {
-    if (this.sizeCache.has(repo)) return this.sizeCache.get(repo)
+    if (!this.sizeCache.has(repo)) await this.fetchModelInfo(repo)
+    return this.sizeCache.get(repo)
+  }
+
+  /**
+   * Exact parameter count in billions, from `safetensors.total`. The convert
+   * plan prefers this over parsing "7B" out of the repo name — many repos
+   * name no size at all, and a name is a convention where this is a count.
+   */
+  async getParamsB(repo: string): Promise<number | undefined> {
+    if (!this.paramsCache.has(repo)) await this.fetchModelInfo(repo)
+    return this.paramsCache.get(repo)
+  }
+
+  /** One fetch fills both caches: bytes and parameter count share a response. */
+  private async fetchModelInfo(repo: string): Promise<void> {
     try {
       const url = `${HF_API}/models/${repo}`
       const res = await fetch(url, { headers: this.headers() })
       if (!res.ok) throw new Error(`model info failed (${res.status})`)
       const json = (await res.json()) as HfModelInfo
-      const bytes = bytesFromSafetensors(json.safetensors?.parameters)
-      this.sizeCache.set(repo, bytes)
-      return bytes
+      const quant = deriveQuant(repo, json.tags)
+      // Same split as toSummary: the AWQ/GPTQ/bnb family reports logical
+      // counts, everything else reports stored elements.
+      if (hubCountsLogicalParams(repo, json.tags)) {
+        const paramsB = paramsBFromSafetensors(json.safetensors?.total)
+        this.paramsCache.set(repo, paramsB)
+        this.sizeCache.set(repo, paramsB !== undefined ? estimateBytesFromParams(paramsB, quant) : undefined)
+      } else {
+        this.sizeCache.set(repo, bytesFromSafetensors(json.safetensors?.parameters))
+        this.paramsCache.set(
+          repo,
+          effectiveParamsB(json.safetensors?.total, json.safetensors?.parameters, repo, quant),
+        )
+      }
     } catch (err) {
-      log.warn(`getModelSize(${repo}) failed`, err)
+      log.warn(`model info (${repo}) failed`, err)
       this.sizeCache.set(repo, undefined)
-      return undefined
+      this.paramsCache.set(repo, undefined)
     }
   }
 
@@ -206,8 +237,15 @@ function toSummary(m: HfModel): ModelSummary {
   const quant = deriveQuant(id, tags)
   // The Hub reports per-dtype element counts, so weight bytes are exact rather
   // than inferred from "7B" in the name — including for the mixed-precision
-  // repos where a name-based guess is worst.
-  const exactBytes = bytesFromSafetensors(m.safetensors?.parameters)
+  // repos where a name-based guess is worst. Except the AWQ/GPTQ/bnb family,
+  // where the Hub counts logical parameters: there `total` is the parameter
+  // count and the bytes have to be estimated from it instead.
+  const logical = hubCountsLogicalParams(id, tags)
+  const exactBytes = logical ? undefined : bytesFromSafetensors(m.safetensors?.parameters)
+  const paramsB = logical
+    ? (paramsBFromSafetensors(m.safetensors?.total) ??
+      effectiveParamsB(m.safetensors?.total, m.safetensors?.parameters, id, quant))
+    : effectiveParamsB(m.safetensors?.total, m.safetensors?.parameters, id, quant)
   const base = m.cardData?.base_model
   return {
     id,
@@ -223,9 +261,11 @@ function toSummary(m: HfModel): ModelSummary {
     // block for gated and unusual repos — so fall back to the tag rather than
     // taking silence as a no.
     format: classifyFormat(id, tags, m.library_name, m.safetensors ? true : undefined),
-    paramsB: effectiveParamsB(m.safetensors?.total, m.safetensors?.parameters, id, quant),
+    paramsB,
     baseModel: Array.isArray(base) ? base[0] : base,
-    sizeBytes: exactBytes ?? estimateBytes(id, quant),
+    sizeBytes:
+      exactBytes ??
+      (paramsB !== undefined ? estimateBytesFromParams(paramsB, quant) : estimateBytes(id, quant)),
     sizeExact: exactBytes !== undefined,
   }
 }
