@@ -2,7 +2,7 @@
   "name": "mlx-console-gui",
   "displayName": "MLX Console GUI",
   "description": "Run and manage mlx-lm on Apple Silicon: download, convert and serve MLX models, watch GPU and memory use, and drive it from VS Code, a browser, or a headless daemon.",
-  "version": "0.0.20",
+  "version": "0.0.21",
   "publisher": "mlx-console",
   "author": {
     "name": "bengurion",
@@ -470,6 +470,7 @@
     "electron-builder": "^26.15.3",
     "esbuild": "^0.28.1",
     "marked": "^18.0.7",
+    "mermaid": "^11.16.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "typescript": "^7.0.2"

@@ -186,11 +186,14 @@ export class WebUiServer {
           'content-type': 'text/html; charset=utf-8',
           // Same posture as the panel's own CSP: nothing external, scripts by
           // nonce. `connect-src 'self'` is the one addition — the browser
-          // transport needs to reach its own origin.
+          // transport needs to reach its own origin. Styles cannot be nonced:
+          // mermaid injects <style> and style="" into its SVGs, and a nonce's
+          // presence makes browsers ignore 'unsafe-inline'. Scripts stay the
+          // real line of defence.
           'content-security-policy': [
             "default-src 'none'",
             "img-src 'self' https: data:",
-            `style-src 'nonce-${nonce}'`,
+            "style-src 'self' 'unsafe-inline'",
             `script-src 'nonce-${nonce}' 'self'`,
             "connect-src 'self'",
           ].join('; '),
@@ -460,8 +463,12 @@ ${BROWSER_UI}
   .dark #theme .sun { display: none; }
   .dark #theme .moon { display: block; }
   /* Fill the width like the app-base shell does — no artificial column cap;
-     the cards' own grid decides how many tracks a big screen gets. */
-  main { flex: 1; min-height: 0; overflow-y: auto; padding: 20px 24px 48px; }
+     the cards' own grid decides how many tracks a big screen gets. The
+     padding lives on #root, not main: main is the scroll container, and
+     padding there would hold sticky children (the Info tabs) 20px below the
+     scrollport with content showing through the gap. */
+  main { flex: 1; min-height: 0; overflow-y: auto; }
+  main > #root { padding: 20px 24px 48px; }
   #offline { display: none; padding: 6px 24px; background: var(--warning); color: #111; font-size: 12px; }
   #offline.on { display: block; }
 </style>

@@ -81,13 +81,31 @@ export const STYLES = /* css */ `
   .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 28px; align-items: start; }
   @media (max-width: 640px) { .grid-2 { grid-template-columns: 1fr; } }
 
-  /* Rendered markdown (the Info page): a readable measure and quiet chrome. */
-  .prose { max-width: 860px; line-height: 1.6; }
+  /* The Info page's section tabs: the README is long, tabs beat scrolling. */
+  .doc-tabs { display: flex; flex-wrap: wrap; gap: 2px; margin: 0 0 14px;
+              border-bottom: 1px solid var(--vscode-panel-border);
+              position: sticky; top: 0; z-index: 5;
+              background: var(--page-background, var(--vscode-editor-background)); }
+  .doc-tabs button { background: none; border: none; border-radius: 0;
+                     color: var(--vscode-descriptionForeground);
+                     border-bottom: 2px solid transparent; margin-bottom: -1px;
+                     padding: 6px 10px; cursor: pointer; white-space: nowrap; }
+  .doc-tabs button:hover { color: var(--vscode-foreground); background: rgba(128,128,128,0.08); }
+  .doc-tabs button.active { color: var(--vscode-foreground); font-weight: 600;
+                            border-bottom-color: var(--vscode-focusBorder); }
+
+  /* Rendered markdown (the Info page): fills the width like every other view.
+     Tables, code and diagrams get the whole column; paragraphs keep a readable
+     measure so lines do not run 200 characters on a wide window. */
+  .prose { line-height: 1.65; font-size: 1.1em; }
+  .prose section > h2:first-child { border-top: none; padding-top: 0; margin-top: 4px; }
+  .prose .mermaid { margin: 14px 0; }
+  .prose .mermaid svg { max-width: 100%; height: auto; }
   .prose h1 { font-size: 1.7em; margin: 0 0 12px; }
   .prose h2 { font-size: 1.3em; margin: 28px 0 8px; padding-top: 12px;
               border-top: 1px solid var(--vscode-panel-border); }
   .prose h3 { font-size: 1.05em; margin: 18px 0 6px; }
-  .prose p, .prose li { max-width: 78ch; }
+  .prose p, .prose li { max-width: 90ch; }
   .prose li { margin: 3px 0; }
   .prose code { background: var(--vscode-textCodeBlock-background, rgba(128,128,128,0.12));
                 border-radius: 4px; padding: 1px 5px; font-size: 0.9em;
