@@ -46,6 +46,9 @@ function buildTabs(md: string): Tab[] {
   let inFence = false
   for (const line of md.split('\n')) {
     if (/^\s*```/.test(line)) inFence = !inFence
+    // Screenshots ship in the repo, not in this bundle — a broken-image icon
+    // of the very page being looked at helps nobody.
+    if (!inFence && /^!\[.*\]\(print_screens\//.test(line.trim())) continue
     const m = inFence ? null : line.match(/^## +(.+)/)
     if (m) parts.push({ title: m[1].trim(), lines: [line] })
     else parts[parts.length - 1].lines.push(line)

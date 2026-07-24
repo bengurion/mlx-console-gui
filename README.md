@@ -2,6 +2,12 @@
 
 **Run large language models locally on your Mac — and see what they actually cost.**
 
+**[Overview](#one-system-three-front-ends)** · **[Why](#why-this-exists)** ·
+**[What it does](#what-it-does)** · **[Install](#install)** ·
+**[Dashboard](#the-web-dashboard)** · **[Headless](#headless-mode)** ·
+**[API](#calling-the-api)** · **[Configuration](#configuration)** ·
+**[Development](#development)** · **[Settings](#settings-reference)**
+
 MLX Console is a front end for [mlx-lm](https://github.com/ml-explore/mlx-lm)'s inference
 server. It starts and supervises `mlx_lm.server`, manages the models that server loads, and
 tells you honestly what those models cost in memory — before they take your machine down
@@ -10,6 +16,8 @@ with them.
 If you have used mlx-lm from the terminal, you know the loop: one window running the server,
 another for `huggingface-cli`, a browser tab open on the Hub trying to work out whether a
 120B model will actually fit in 128 GB. This collapses that into one panel.
+
+![The dashboard: a 120B model resident, the memory verdict, live headroom, and what context costs right now](print_screens/Dashboard.png)
 
 ---
 
@@ -143,6 +151,12 @@ endpoint lives at `http://127.0.0.1:8080/v1` for any client that speaks the prot
 `.bin`-only repos are marked unusable rather than silently failing later), download with
 progress, convert to MLX at the best quantization that fits your machine, launch, and delete.
 
+![Search: every card carries a fit verdict and exact sizes; convertible repos offer a quantization menu priced for this machine](print_screens/Search.png)
+
+![Models: everything on disk, with launch, per-model settings, and partial downloads offered a Resume instead of a Launch](print_screens/Models.png)
+
+![Downloads: live progress for downloads and conversions, resumable after any interruption](print_screens/Downloads.png)
+
 **See the cost** — live CPU, unified memory and GPU utilisation; which model is resident and
 how long it took to load; how much headroom is left; and a per-model breakdown of context
 window, KV cost per token, weight size and vocabulary, read from the model's own
@@ -160,7 +174,10 @@ attribution is one authorisation away, via `sudo powermetrics` under a rule you 
 
 **Configure in place** — every setting is editable from the UI, with sizes in MB/GB rather
 than raw bytes. Values the model knows about itself — context window, sampling defaults, max
-output tokens — are read from its files, and anything you set explicitly always wins.
+output tokens — are read from its files, and anything you set explicitly always wins. Edits
+stage until you save them, so half-decisions never go live.
+
+![Settings: the whole catalog in place, staged until saved](print_screens/Settings.png)
 
 **Use it in the editor, if you want** — every downloaded model appears in the VS Code chat
 model picker (one-time enable: model dropdown → **Manage Models…** → **MLX (local)**), and
@@ -211,7 +228,7 @@ npm run vsce:package    # README sync + production esbuild + vsce package
 Then install the packaged extension and reload the window:
 
 ```bash
-code --install-extension mlx-console-gui-0.0.20.vsix --force
+code --install-extension mlx-console-gui-0.0.23.vsix --force
 ```
 
 Open the **MLX Console** icon in the activity bar afterwards.
@@ -237,7 +254,7 @@ the app bundle:
 
 ```bash
 "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" \
-  --install-extension mlx-console-gui-0.0.20.vsix --force
+  --install-extension mlx-console-gui-0.0.23.vsix --force
 ```
 
 </details>
@@ -277,7 +294,10 @@ in `~/.mlx-console/config.json` at a virtualenv that has mlx-lm in it.
 With VS Code running, the dashboard **is** the panel — the same React app, served to your
 browser and bridged to the same message hub. Hugging Face search, downloads with progress,
 conversion, the model list, metrics and every setting: not a reimplementation that slowly
-falls behind, but the same code with a different transport.
+falls behind, but the same code with a different transport. The docs travel with it — this
+README renders as the **Info** page, one tab per section:
+
+![Info: this document, inside the app, one tab per section](print_screens/Info.png)
 
 ```mermaid
 flowchart LR
@@ -435,6 +455,8 @@ The server speaks the OpenAI protocol at `http://127.0.0.1:8080/v1` (the port is
 `server.port`). Any client that takes a base URL works — no API key is checked, but most
 clients insist on one, so give them anything non-empty. The **Clients** page generates these
 snippets with your live URL and model filled in.
+
+![Clients: connection snippets generated from the live base URL and resident model](print_screens/Clients.png)
 
 This is the server's *entire* route table — `mlx_lm.server` implements these five paths and
 answers 404 to everything else:

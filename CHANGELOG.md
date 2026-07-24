@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.23
+
+First release published to GitHub, with the DMG and VSIX attached.
+
+- **Screenshots in the README** — every view, referenced from `print_screens/`. The in-app Info page skips them: a broken-image icon of the very page being looked at helps nobody, and the images live in the repo rather than the bundle.
+
 ## 0.0.22 — Unreleased
 
 Settings edits became decisions you apply, not keystrokes that go live.
