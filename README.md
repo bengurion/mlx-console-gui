@@ -429,6 +429,65 @@ management.
 
 ---
 
+## Calling the API
+
+The server speaks the OpenAI protocol at `http://127.0.0.1:8080/v1` (the port is
+`server.port`). Any client that takes a base URL works — no API key is checked, but most
+clients insist on one, so give them anything non-empty. The **Clients** page generates these
+snippets with your live URL and model filled in.
+
+This is the server's *entire* route table — `mlx_lm.server` implements these five paths and
+answers 404 to everything else:
+
+| Endpoint | Method | What it does |
+|---|---|---|
+| `/v1/chat/completions` | POST | Chat, streaming and not. The one most clients use. |
+| `/chat/completions` | POST | The same handler, for clients that drop the `/v1`. |
+| `/v1/completions` | POST | Plain text completion. |
+| `/v1/models` | GET | Your **download cache** — every model it could serve, not what is resident. |
+| `/health` | GET | `{"status": "ok"}` once the server is up. |
+
+```bash
+curl http://127.0.0.1:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "mlx-community/Qwen2.5-7B-Instruct-4bit",
+    "messages": [{"role": "user", "content": "Say hello."}],
+    "max_tokens": 64
+  }'
+```
+
+Or with the OpenAI SDK:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="not-checked")
+reply = client.chat.completions.create(
+    model="mlx-community/Qwen2.5-7B-Instruct-4bit",
+    messages=[{"role": "user", "content": "Say hello."}],
+)
+```
+
+The `model` field is load-bearing: **the first request naming a model is what loads it** —
+expect that request to stall for the load time (seconds to minutes, size-dependent) before
+tokens flow. Later requests naming the same model are instant; naming a *different* model
+drops the resident one and loads the new one inside that request.
+
+With a gpt-oss model resident, responses carry the harmony format (analysis channels and
+control tokens) that plain OpenAI clients render as noise. Enable `cleanEndpoint.enabled` for
+a second endpoint (on `cleanEndpoint.port`) that strips it and serves the final answer only —
+point ordinary clients there, and harmony-aware ones at the raw port.
+
+> [!IMPORTANT]
+> **There is no `/v1/embeddings`.** mlx-lm implements text-generation architectures only:
+> embedding models (bert, sentence-transformers and kin) cannot be served, loaded, or
+> converted — the search page says so on their cards rather than letting a conversion fail.
+> If your workflow needs local embeddings, run them on a dedicated runtime (
+> `sentence-transformers` on MPS, or an embeddings-capable server) alongside this one.
+
+---
+
 ## Configuration
 
 Every setting is editable from the UI — the **Server & Settings** panel, or the web

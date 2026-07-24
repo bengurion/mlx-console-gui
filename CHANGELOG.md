@@ -7,6 +7,7 @@ Settings edits became decisions you apply, not keystrokes that go live.
 - **Settings stage until you save** — a sticky bar counts unsaved changes with Save and Discard, replacing save-as-you-type: several settings belong to one decision (a port and its exposure, a draft model and its token count), and applying them keystroke by keystroke made half-decisions live. Typing a value back to what it was un-stages it; a rejected value stays staged with its error so the correction is one edit away.
 - **Reset truly unsets** — saving a value equal to the default now removes the key instead of writing an explicit copy of it. The difference is real: explicitly-set settings override per-model recommendations, so a "reset" that wrote the default silently pinned it.
 - The Settings page text matches the Info page's larger size.
+- **The API is documented** — a "Calling the API" section (and Info tab) lists the server's entire route table with curl and OpenAI-SDK examples, explains that the first request naming a model is what loads it, points harmony-blind clients at the filtered endpoint — and states plainly that `/v1/embeddings` does not exist: mlx-lm serves text generation only.
 
 ## 0.0.21 — Unreleased
 

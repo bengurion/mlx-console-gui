@@ -29,6 +29,7 @@ const RENAME: Record<string, string> = {
   'One system, three front ends': 'Overview',
   'The web dashboard': 'Dashboard',
   'Headless mode': 'Headless',
+  'Calling the API': 'API',
 }
 
 /**
