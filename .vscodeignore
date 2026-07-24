@@ -5,7 +5,6 @@
 **/*.ts
 **/*.vsix
 **/__pycache__/**
-.claude/**
 .github/**
 .gitignore
 .venv/**
