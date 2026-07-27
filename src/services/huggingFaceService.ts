@@ -15,6 +15,13 @@ import {
 } from './modelFit.ts'
 import type { ModelSummary, SearchQuery, SearchResult } from '../shared/protocol'
 
+export interface ConfigFacts {
+  modelType?: string
+  /** Set when a quantization_config marks the weights as already quantized —
+   * the value names the format (e.g. "nvfp4-pack-quantized"). */
+  prequantized?: string
+}
+
 interface HfModel {
   id?: string
   modelId?: string
@@ -174,30 +181,65 @@ export class HuggingFaceService {
     return this.paramsCache.get(repo)
   }
 
-  private readonly typeCache = new Map<string, string | undefined>()
+  private readonly configCache = new Map<string, ConfigFacts>()
 
   /**
-   * The repo's `model_type` from its config.json — what mlx-lm dispatches on.
-   * The convert plan checks it against mlx-lm's registry before the download,
-   * because "safetensors present" only means the weights are readable, not
-   * that any MLX runtime exists for them.
+   * What the repo's config.json says that conversion decisions hang on:
+   * `model_type` (what mlx-lm dispatches on) and whether a
+   * `quantization_config` marks the weights as already quantized. Both are
+   * checked before the download, because "safetensors present" only means the
+   * weights are readable, not that mlx_lm.convert can do anything with them.
+   *
+   * mxfp4 is the exception to the pre-quantized rule: mlx_lm.convert
+   * dequantizes it (gpt-oss ships that way). Every other quant_method —
+   * compressed-tensors (NVFP4/FP8), modelopt, awq, gptq, bnb — leaves scale
+   * tensors like `weight_scale` that convert dies on mid-run.
    */
-  async getModelType(repo: string): Promise<string | undefined> {
-    if (this.typeCache.has(repo)) return this.typeCache.get(repo)
-    let type: string | undefined
+  async getConfigFacts(repo: string): Promise<ConfigFacts> {
+    const cached = this.configCache.get(repo)
+    if (cached) return cached
+    const facts: ConfigFacts = {}
     try {
       const res = await fetch(`https://huggingface.co/${repo}/raw/main/config.json`, {
         headers: this.headers(),
       })
       if (res.ok) {
-        const json = (await res.json()) as { model_type?: string }
-        type = typeof json.model_type === 'string' ? json.model_type : undefined
+        const json = (await res.json()) as {
+          model_type?: string
+          quantization_config?: {
+            quant_method?: string
+            format?: string
+            // modelopt-style configs name no method, only per-layer algorithms.
+            quantized_layers?: Record<string, { quant_algo?: string }>
+          }
+        }
+        facts.modelType = typeof json.model_type === 'string' ? json.model_type : undefined
+        const qc = json.quantization_config
+        if (qc && typeof qc === 'object') {
+          const method = (qc.quant_method ?? '').toLowerCase()
+          if (method !== 'mxfp4') {
+            const algos = [
+              ...new Set(
+                Object.values(qc.quantized_layers ?? {})
+                  .map((l) => l?.quant_algo)
+                  .filter((a): a is string => typeof a === 'string'),
+              ),
+            ]
+            facts.prequantized =
+              qc.format ?? qc.quant_method ?? (algos.length ? algos.join(', ') : 'unknown format')
+          }
+        }
       }
     } catch (err) {
-      log.warn(`getModelType(${repo}) failed`, err)
+      log.warn(`getConfigFacts(${repo}) failed`, err)
     }
-    this.typeCache.set(repo, type)
-    return type
+    this.configCache.set(repo, facts)
+    return facts
+  }
+
+  /** The repo's `model_type` from its config.json. */
+  async getModelType(repo: string): Promise<string | undefined> {
+    return (await this.getConfigFacts(repo)).modelType
   }
 
   /** One fetch fills both caches: bytes and parameter count share a response. */

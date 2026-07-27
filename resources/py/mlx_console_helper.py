@@ -16,6 +16,7 @@ import datetime
 import json
 import os
 import shutil
+import stat as stat_module
 import sys
 import time
 
@@ -42,13 +43,21 @@ def _cache_info():
 
 
 def _dir_stats(path):
-    """Total bytes and file count under a directory."""
+    """Total bytes and file count under a directory.
+
+    lstat, not stat: the hub cache links every completed file from
+    snapshots/ into blobs/, and following the symlink counted each byte
+    twice — the progress bar hit 100% at the halfway mark and pinned there.
+    """
     size = 0
     files = 0
     for root, _dirs, names in os.walk(path):
         for name in names:
             try:
-                size += os.path.getsize(os.path.join(root, name))
+                st = os.lstat(os.path.join(root, name))
+                if stat_module.S_ISLNK(st.st_mode):
+                    continue
+                size += st.st_size
                 files += 1
             except OSError:
                 pass
@@ -315,6 +324,23 @@ def _sweep_stale_incompletes(repo_dir, max_age_s=3600):
             pass
 
 
+#: Alternate-format weights mlx-lm cannot load. Some repos ship several
+#: complete copies of the model (safetensors plus `metal/`, `original/`,
+#: GGUF, …); pulling all of them tripled the download for gpt-oss-120b
+#: (195 GB fetched for 65 GB of usable weights).
+_SKIP_DIRS = ("original/", "metal/", "onnx/", "coreml/", "openvino/")
+_SKIP_SUFFIXES = (".bin", ".pth", ".pt", ".gguf", ".h5", ".msgpack", ".onnx", ".mlmodelc", ".mlpackage")
+
+
+def _wanted_for_mlx(name):
+    lowered = name.lower()
+    if any(lowered.startswith(d) or ("/" + d) in lowered for d in _SKIP_DIRS):
+        return False
+    if lowered.endswith(_SKIP_SUFFIXES):
+        return False
+    return True
+
+
 def download(repo_id):
     import threading
 
@@ -327,7 +353,11 @@ def download(repo_id):
         emit({"event": "error", "message": f"model_info failed: {exc}"})
         return
 
-    files = [(s.rfilename, int(getattr(s, "size", 0) or 0)) for s in (meta.siblings or [])]
+    files = [
+        (s.rfilename, int(getattr(s, "size", 0) or 0))
+        for s in (meta.siblings or [])
+        if _wanted_for_mlx(s.rfilename)
+    ]
     total = sum(size for _, size in files)
     emit({"event": "start", "total": total, "nbFiles": len(files)})
 

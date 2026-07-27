@@ -150,7 +150,7 @@ test('conversion runs mlx_lm.convert and reports progress from its output', asyn
     '--hf-path',
     'Qwen/Qwen2.5-Coder-7B-Instruct',
     '--mlx-path',
-    path.join(dir, 'mlx-converted', 'Qwen2.5-Coder-7B-Instruct-4bit'),
+    path.join(dir, 'mlx-converted', 'Qwen--Qwen2.5-Coder-7B-Instruct-4bit'),
     '-q',
     '--q-bits',
     '4',
@@ -186,7 +186,7 @@ test('bf16 converts without quantizing and names the output accordingly', async 
     '--hf-path',
     'Qwen/Qwen2.5-7B',
     '--mlx-path',
-    path.join(dir, 'mlx-converted', 'Qwen2.5-7B-bf16'),
+    path.join(dir, 'mlx-converted', 'Qwen--Qwen2.5-7B-bf16'),
     '--dtype',
     'bfloat16',
   ])
@@ -199,7 +199,7 @@ test('canceling removes the half-written model directory', async () => {
   const { convert, child } = harness({ modelsDir: dir })
   await convert.start('Qwen/Qwen2.5-7B', 4)
 
-  const outPath = path.join(dir, 'mlx-converted', 'Qwen2.5-7B-4bit')
+  const outPath = path.join(dir, 'mlx-converted', 'Qwen--Qwen2.5-7B-4bit')
   fs.mkdirSync(outPath, { recursive: true })
   fs.writeFileSync(path.join(outPath, 'model-00001-of-00002.safetensors'), 'partial')
 
@@ -233,7 +233,7 @@ test('a failed conversion keeps the last thing the tool said', async () => {
 test('an existing output is refused rather than overwritten', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mlx-convert-'))
   const { convert, spawned } = harness({ modelsDir: dir })
-  fs.mkdirSync(path.join(dir, 'mlx-converted', 'Qwen2.5-7B-4bit'), { recursive: true })
+  fs.mkdirSync(path.join(dir, 'mlx-converted', 'Qwen--Qwen2.5-7B-4bit'), { recursive: true })
 
   const res = await convert.start('Qwen/Qwen2.5-7B', 4)
   assert.equal(res.ok, false)

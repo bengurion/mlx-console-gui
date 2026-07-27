@@ -8,6 +8,9 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import * as fs from 'node:fs'
+import * as os from 'node:os'
+import * as path from 'node:path'
 import { ServerManager } from '../src/backend/serverManager.ts'
 import { setSettingsSource } from '../src/core/settings.ts'
 
@@ -50,13 +53,78 @@ test('a load announces itself before the request and confirms after', async () =
   )
 })
 
-test('loading a model that is already resident does not re-read it', async () => {
+test('a launch verifies residency instead of trusting the cache', async () => {
+  /*
+   * The cache can lie: an API client can displace the model behind the
+   * console's back, and trusting "already loaded" once turned Launch into a
+   * silent no-op while 40 GB of the wrong model sat resident. The server does
+   * not re-read weights for a model it already has, so verification costs one
+   * token — and the UI must not flicker through 'loading' when the cache was
+   * right, because beginModelUse/confirmModelLoaded both no-op on a match.
+   */
   const { mgr, calls } = managerWith(async () => undefined)
   assert.equal(await mgr.warmUp('org/model'), true)
   assert.equal(calls.length, 1)
 
+  const states: string[] = []
+  mgr.onDidChange((s) => states.push(s.modelState))
   assert.equal(await mgr.warmUp('org/model'), true, 'still reports success')
-  assert.equal(calls.length, 1, 'minutes of work avoided by not asking again')
+  assert.equal(calls.length, 2, 'verified with a request rather than assumed')
+  assert.ok(!states.includes('loading'), 'no loading flicker when it was truly resident')
+})
+
+test('a published record carries a pid even for a server we never spawned', async () => {
+  /*
+   * The pid is what memory attribution hangs off: metrics read that process's
+   * RSS, and without it an idle model's 50 GB shows under "other apps" while
+   * "model" reads whatever the GPU happens to have mapped (~1 GB). A load
+   * confirmed via the proxy for an adopted server must resolve the pid from
+   * the port before publishing.
+   */
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mlx-state-'))
+  const file = path.join(dir, 'server-state.json')
+  const { mgr } = managerWith(async () => undefined)
+  // A live pid: the liveness check clears records whose pid is gone, which is
+  // right — and exactly what a made-up test pid would trip over.
+  mgr.portHolder = async () => process.pid
+  mgr.useSharedState(file)
+
+  try {
+    assert.equal(await mgr.warmUp('org/model'), true)
+    // publishSharedState is fire-and-forget off the confirm; give it a beat.
+    await new Promise((r) => setTimeout(r, 50))
+    const state = JSON.parse(fs.readFileSync(file, 'utf8')) as { pid?: number; loadedModel?: string }
+    assert.equal(state.loadedModel, 'org/model')
+    assert.equal(state.pid, process.pid, 'pid resolved from the port holder')
+  } finally {
+    mgr.dispose()
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('remote mode asks the daemon to start the server, never spawns', async () => {
+  /*
+   * A thin-client window spawning its own server builds the command line from
+   * the editor's settings — which in remote mode are not the configuration.
+   * That is how a chat request once started a bare-flag server (no prompt
+   * cache bound, no concurrency limit) behind the app's back.
+   */
+  const mgr = new ServerManager({ ensureReady: async () => assert.fail('env must not be touched') } as never)
+  let up = false
+  let asked = 0
+  Object.assign(mgr, { client: { ping: async () => up, chat: async () => undefined } })
+  mgr.remoteStarter = async () => {
+    asked += 1
+    up = true
+    return true
+  }
+
+  assert.equal(await mgr.ensureRunning(), true)
+  assert.equal(asked, 1, 'the daemon was asked')
+  assert.equal(mgr.state, 'ready')
+
+  assert.equal(await mgr.ensureRunning(), true)
+  assert.equal(asked, 1, 'an answering server is adopted, not restarted')
 })
 
 test('impatient clicks join the load in flight instead of queueing more', async () => {

@@ -22,6 +22,7 @@ import { convertedRoot, mlxProcessEnv } from '../util/env.ts'
 import {
   BF16_BITS,
   CONVERT_BITS,
+  PREQUANT_NAME_RE,
   bytesForBits,
   chooseQuantBits,
   explainFit,
@@ -71,6 +72,24 @@ export class ConvertManager {
   private readonly run: ConvertRunner
   private readonly fetcher: ConvertDownloader | undefined
   private readonly aborts = new Map<string, AbortController>()
+  /**
+   * Repos whose child got SIGTERM but has not yet closed. Cancel used to
+   * release the start-guard immediately, so a quick Retry started a new run —
+   * which the old run's close handler then destroyed, deleting the new output
+   * directory and marking the new job canceled.
+   */
+  private readonly stopping = new Set<string>()
+
+  /** Repo facts for the gates; fetched per start so no entry path skips them. */
+  facts:
+    | ((repo: string) => Promise<{
+        paramsB?: number
+        arch?: { modelType?: string; supported?: boolean; prequantized?: string }
+      }>)
+    | undefined
+
+  /** Something else that owns this repo right now — a plain download, typically. */
+  busyElsewhere: ((repo: string) => string | undefined) | undefined
 
   private readonly _onDidChange = new Emitter<ConvertItem[]>()
   readonly onDidChange = this._onDidChange.event
@@ -101,7 +120,37 @@ export class ConvertManager {
 
   outputPath(repo: string, bits: number): string {
     const suffix = bits === BF16_BITS ? 'bf16' : `${bits}bit`
-    return path.join(this.outputRoot(), `${repo.split('/').pop()}-${suffix}`)
+    // The org stays in the name: `Qwen/X` and `unsloth/X` are different
+    // models, and dropping the org mapped both to the same directory.
+    const name = repo.includes('/') ? repo.replace('/', '--') : repo
+    return path.join(this.outputRoot(), `${name}-${suffix}`)
+  }
+
+  /** Whether this repo has a conversion in flight (either phase, or stopping). */
+  isActive(repo: string): boolean {
+    return this.running.has(repo) || this.aborts.has(repo) || this.stopping.has(repo)
+  }
+
+  /** Drop cards whose output path or repo matches a deleted model. */
+  removeByOutput(repoOrPath: string): void {
+    for (const [key, item] of this.items) {
+      if (item.outPath !== repoOrPath && item.repo !== repoOrPath) continue
+      if (this.isActive(item.repo)) continue
+      this.items.delete(key)
+    }
+    this._onDidChange.fire(this.list())
+  }
+
+  /** Drop a settled card. */
+  remove(repo: string, bits?: number): void {
+    if (this.isActive(repo)) return
+    let removed = false
+    for (const [key, item] of this.items) {
+      if (item.repo !== repo) continue
+      if (bits !== undefined && item.bits !== bits) continue
+      removed = this.items.delete(key) || removed
+    }
+    if (removed) this._onDidChange.fire(this.list())
   }
 
   /**
@@ -116,7 +165,7 @@ export class ConvertManager {
   plan(
     repo: string,
     exactParamsB?: number,
-    arch?: { modelType?: string; supported?: boolean },
+    arch?: { modelType?: string; supported?: boolean; prequantized?: string },
   ): ConvertPlan {
     const budgetBytes = this.budgetBytes()
     const totalBytes = os.totalmem()
@@ -148,16 +197,24 @@ export class ConvertManager {
     }
 
     // Already-quantized safetensors are just as unconvertible as GGUF, but
-    // fail an hour in — after the full download — instead of up front.
-    if (/\b(awq|gptq|bnb|bitsandbytes)\b/i.test(repo)) {
+    // fail an hour in — after the full download — instead of up front. The
+    // repo's own quantization_config is authoritative when the caller has it;
+    // the name check remains for when the config could not be fetched.
+    const prequant = arch?.prequantized
+      ? `already quantized (${arch.prequantized})`
+      : PREQUANT_NAME_RE.test(repo)
+        ? 'already quantized, by its name'
+        : undefined
+    if (prequant) {
       return {
         repo,
         budgetBytes,
         totalBytes,
         options: [],
         error:
-          'This repo is already quantized (AWQ/GPTQ/bitsandbytes), and mlx_lm.convert only reads ' +
-          'full-precision weights. Convert the original model it was quantized from instead.',
+          `This repo is ${prequant}, and mlx_lm.convert only reads full-precision ` +
+          'weights — it dies on the quantization scale tensors mid-run. Convert the original ' +
+          'model it was quantized from instead.',
       }
     }
 
@@ -216,20 +273,40 @@ export class ConvertManager {
   }
 
   async start(repo: string, bits?: number): Promise<{ ok: boolean; error?: string }> {
-    if (this.running.has(repo) || this.aborts.has(repo)) return { ok: false, error: 'Already converting.' }
+    // A refusal answers the caller, but a retry from an existing card has no
+    // caller reading the answer — put it on the card too, or the click looks
+    // like it did nothing.
+    const refuse = (error: string): { ok: false; error: string } => {
+      if (this.items.has(repo)) this.update(repo, { state: 'error', message: error })
+      return { ok: false, error }
+    }
+    if (this.isActive(repo)) return { ok: false, error: 'Already converting.' }
+    const busy = this.busyElsewhere?.(repo)
+    if (busy) return refuse(busy)
 
-    const plan = this.plan(repo)
-    if (plan.options.length === 0) return { ok: false, error: plan.error ?? 'Cannot convert this repo.' }
+    // Fetch the repo's facts here rather than trusting the caller to have
+    // done it: the command palette used to call straight in, skipping the
+    // architecture and pre-quantized gates the Search page enforced.
+    const f = await this.facts?.(repo).catch(() => undefined)
+    const plan = this.plan(repo, f?.paramsB, f?.arch)
+    if (plan.options.length === 0) return refuse(plan.error ?? 'Cannot convert this repo.')
 
     const chosen = bits ?? plan.options.find((o) => o.recommended)?.bits ?? 4
     const outPath = this.outputPath(repo, chosen)
 
+    // A done card for another bit width is a real result; starting a new
+    // width must not overwrite it (items were keyed by repo alone).
+    const prev = this.items.get(repo)
+    if (prev && prev.state === 'done' && prev.bits !== chosen) {
+      this.items.set(`${repo}#${prev.bits}`, prev)
+    }
+
     if (fs.existsSync(outPath)) {
-      return { ok: false, error: `${outPath} already exists. Delete it first, or pick another bit width.` }
+      return refuse(`${outPath} already exists. Delete it first, or pick another bit width.`)
     }
     // Failing here is much cheaper than failing after an hour of downloading.
     if (!(await this.env.ensureReady(true))) {
-      return { ok: false, error: 'The Python environment is not ready — set it up from Settings first.' }
+      return refuse('The Python environment is not ready — set it up from Settings first.')
     }
 
     this.update(repo, {
@@ -307,15 +384,24 @@ export class ConvertManager {
     child.stdout?.on('data', onData)
     child.stderr?.on('data', onData)
 
+    let spawnFailed = false
     child.on('error', (err) => {
+      spawnFailed = true
       this.running.delete(repo)
       this.update(repo, { state: 'error', message: `Could not start mlx_lm.convert: ${String(err)}` })
       log.error('convert failed to start', err)
     })
 
     child.on('close', (code, signal) => {
-      const canceled = this.running.get(repo) === undefined || signal === 'SIGTERM'
-      this.running.delete(repo)
+      // A spawn failure already wrote the real reason; the close that follows
+      // used to overwrite it with a "Canceled" nobody asked for.
+      if (spawnFailed) {
+        this.stopping.delete(repo)
+        return
+      }
+      const canceled = this.stopping.has(repo) || signal === 'SIGTERM'
+      if (this.running.get(repo) === child) this.running.delete(repo)
+      this.stopping.delete(repo)
       if (canceled) {
         // A half-written model directory is worse than none: mlx-lm would find
         // it, try to load it, and fail on a missing shard.
@@ -327,6 +413,10 @@ export class ConvertManager {
         this._onDidComplete.fire(outPath)
         log.info(`Converted model saved to ${outPath}`)
       } else {
+        // Same rule as cancel: a half-written model directory is worse than
+        // none — and leaving it would make the retry refuse with
+        // "already exists" instead of relaunching.
+        fs.rmSync(outPath, { recursive: true, force: true })
         const item = this.items.get(repo)
         this.update(repo, {
           state: 'error',
@@ -343,8 +433,13 @@ export class ConvertManager {
     this.aborts.get(repo)?.abort()
     const child = this.running.get(repo)
     if (!child) return
-    this.running.delete(repo) // marks it canceled for the close handler
+    // The start-guard stays held (via `stopping`) until the child actually
+    // closes — releasing it here let a fast Retry race the old cleanup.
+    this.stopping.add(repo)
     child.kill('SIGTERM')
+    setTimeout(() => {
+      if (child.exitCode === null) child.kill('SIGKILL')
+    }, 5000).unref()
   }
 
   dispose() {

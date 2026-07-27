@@ -31,6 +31,8 @@ export interface ModelSummary {
   sizeBytes?: number
   sizeExact?: boolean
   fit?: FitVerdict
+  /** What the fit verdict was computed from: the repo as-is, or its 4-bit convert. */
+  fitBasis?: 'as-is' | '4bit'
   /** GGUF repos cannot be run by mlx-lm (llama.cpp format). */
   gguf?: boolean
   /** AWQ/GPTQ/bnb: safetensors, but pre-quantized — mlx_lm.convert cannot read them. */
@@ -47,6 +49,9 @@ export interface SearchResult {
   /** Matches after filtering, before the display limit is applied. */
   total: number
   truncated: boolean
+  /** Format counts over the full filtered set, not the visible page. */
+  mlxTotal?: number
+  convertibleTotal?: number
   /** How many Hub entries were examined to find them. */
   scanned: number
   /** True when the search reached the end of the Hub's results. */
@@ -301,6 +306,61 @@ export interface ExternalClientsInfo {
   snippets: { opencode: string; copilot: string; vscode: string; curl: string; gotchas: string }
 }
 
+/** One `{name, value}` entry of `claudeCode.environmentVariables`. */
+export interface EnvEntry {
+  name: string
+  value: string
+}
+
+/** One editor install, as the VS Code integration sees it. */
+export interface EditorStatus {
+  /** User-data directory name: 'Code' | 'Cursor' | 'Code - Insiders' | 'VSCodium'. */
+  id: string
+  /** Human name: 'VS Code', 'Cursor', … */
+  label: string
+  settingsPath: string
+  installed: boolean
+  /** settings.json exists but is not parseable JSONC. */
+  parseError?: string
+  /** The managed env block already matches what would be written. */
+  wired: boolean
+  /** Some managed entries are present — wired to this server or a stale one. */
+  hasWiring: boolean
+  /** Top-level settings keys the console would clean up. */
+  staleKeys: string[]
+}
+
+/** Answer to `getVsCodeIntegration`. */
+export interface VsCodeIntegrationInfo {
+  editors: EditorStatus[]
+  /** The block a write would install, for display. */
+  env: EnvEntry[]
+  endpointRunning: boolean
+  endpointPort: number
+  model: string
+  /** Terminal-export equivalent, for people who prefer the shell. */
+  snippet: string
+}
+
+export interface VsCodeIntegrationApplyParams {
+  /** EditorStatus ids to write to. */
+  editors: string[]
+  /** Install/update the managed env block. */
+  wire?: boolean
+  /**
+   * Remove the managed env block, giving Claude Code its own models back.
+   * Wiring is exclusive — ANTHROPIC_BASE_URL redirects everything — so this
+   * is the off switch, not an alternative to `wire`.
+   */
+  unwire?: boolean
+  /** Remove stale keys. */
+  cleanup?: boolean
+}
+
+export interface VsCodeIntegrationResult {
+  results: { editor: string; ok: boolean; changed: boolean; backupPath?: string; error?: string }[]
+}
+
 export type ConvertState = 'downloading' | 'converting' | 'done' | 'error' | 'canceled'
 
 /** One conversion job, shaped like a download because it behaves like one. */
@@ -419,6 +479,10 @@ export type RpcMethod =
   | 'setupDetect'
   | 'setupPickRoot'
   | 'setupInstall'
+  | 'getVsCodeIntegration'
+  | 'applyVsCodeIntegration'
+  | 'dismissDownload'
+  | 'dismissConvert'
 
 /** webview → host */
 export type HostBound =

@@ -393,7 +393,18 @@ if (!gotLock) {
     // in the root config is the escape hatch, mirroring `--keep-server`.
     const keepServer = Boolean(loadSettings().get('app.keepServerOnQuit', false))
     void daemon.stop({ keepServer }).then(done, done)
-    setTimeout(done, QUIT_TIMEOUT_MS).unref()
+    // The abandonment is said out loud: a quit that gives up mid-cleanup can
+    // leave a server running (or half-dead) with weights still wired, and a
+    // silent timeout here is how that read as "the app cleaned up".
+    setTimeout(() => {
+      if (!stopped) {
+        console.warn(
+          `Quit timeout (${QUIT_TIMEOUT_MS}ms): giving up on cleanup with a stop still ` +
+            'in flight. A model server may still be running — check `mlx-console status`.',
+        )
+      }
+      done()
+    }, QUIT_TIMEOUT_MS).unref()
   })
 
   void app.whenReady().then(boot)

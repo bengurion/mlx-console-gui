@@ -72,9 +72,10 @@ export function mapSort(sort: SearchQuery['sort']): string {
 
 export function deriveQuant(id: string, tags?: string[]): string | undefined {
   const hay = (id + ' ' + (tags ?? []).join(' ')).toLowerCase()
-  // mxfp4 before the 4-bit family: it is 4-bit-shaped but sized differently
-  // (block scales), and gpt-oss ships in it.
+  // mxfp4/nvfp4 before the 4-bit family: they are 4-bit-shaped but sized
+  // differently (block scales); gpt-oss ships in mxfp4, NVIDIA repos in nvfp4.
   if (/\bmxfp4\b/.test(hay)) return 'mxfp4'
+  if (/\bnvfp4\b/.test(hay)) return 'nvfp4'
   // q4 must tolerate GGUF spellings like Q4_K_M, where `_` defeats \b.
   if (/\b(4[-_ ]?bit|int4|nf4|w4a16|awq|gptq)\b/.test(hay) || /\bi?q4(?!\d)/.test(hay)) return '4bit'
   if (/\b(8[-_ ]?bit|int8)\b/.test(hay) || /\bq8(?!\d)/.test(hay)) return '8bit'

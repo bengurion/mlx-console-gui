@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { rpc, onPush, copy } from '../api'
 import { Code } from './Code'
+import { ClaudeCodeCard } from './ClaudeCode'
 import type { ExternalClientsInfo, ServerStatusLite } from '../../../src/shared/protocol'
 
 /**
@@ -66,6 +67,8 @@ export function ClientsPage() {
           </div>
         )}
       </div>
+
+      <ClaudeCodeCard />
 
       <Snippet
         title="VS Code — without this extension"

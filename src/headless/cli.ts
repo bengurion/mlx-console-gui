@@ -105,15 +105,22 @@ async function main(): Promise<void> {
     case 'restart': {
       const server = new HeadlessServer(loadSettings())
       if (args.command === 'stop' && args.all) {
-        const { stopped, forced } = await server.stopAll()
+        const { stopped, forced, survivors } = await server.stopAll()
         const total = stopped.length + forced.length
         console.log(
-          total === 0
+          total === 0 && !survivors.length
             ? 'No mlx_lm.server processes were running.'
             : `Stopped ${total} server${total === 1 ? '' : 's'}` +
                 (forced.length ? ` (${forced.length} needed SIGKILL)` : '') +
-                `: ${[...stopped, ...forced].join(', ')}`,
+                `: ${[...stopped, ...forced].join(', ') || '—'}`,
         )
+        if (survivors.length) {
+          console.error(
+            `Survived SIGKILL: ${survivors.join(', ')} — stuck in GPU work, still holding ` +
+              'wired memory. Try again once the kernel call returns.',
+          )
+          process.exitCode = 1
+        }
         return
       }
       const r = await server[args.command]()

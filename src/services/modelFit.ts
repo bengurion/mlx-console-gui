@@ -251,9 +251,18 @@ const PACKED_DTYPES = new Set(['U32', 'I32', 'U16', 'I16', 'U8', 'I8'])
  * MLX packed repos are the opposite: their U32 counts are storage, and
  * elements x width is exact.
  */
+/**
+ * The one pre-quantized name test.
+ *
+ * There used to be three divergent lists (here, the convert plan, the search
+ * quant labels) — so an NVFP4 repo could show a normal Convert button and
+ * only reveal the refusal after the click. One list, imported everywhere.
+ */
+export const PREQUANT_NAME_RE = /\b(awq|gptq|autoawq|auto-gptq|bnb|bitsandbytes|compressed-tensors|nvfp4|fp8)\b/i
+
 export function hubCountsLogicalParams(id: string, tags: string[] = []): boolean {
   const hay = (id + ' ' + tags.join(' ')).toLowerCase()
-  return /\b(awq|gptq|autoawq|auto-gptq|bnb|bitsandbytes|compressed-tensors)\b/.test(hay)
+  return PREQUANT_NAME_RE.test(hay)
 }
 
 /**

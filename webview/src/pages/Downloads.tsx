@@ -51,7 +51,7 @@ export function DownloadsPage() {
         <>
           {items.length > 0 && <div className="small muted">Conversions</div>}
           {converts.map((item) => (
-            <ConvertCard key={item.repo} item={item} />
+            <ConvertCard key={`${item.repo}#${item.bits}`} item={item} />
           ))}
           {items.length > 0 && <div className="small muted">Downloads</div>}
         </>
@@ -82,6 +82,9 @@ export function DownloadsPage() {
               // so resuming continues from where it stopped.
               <a onClick={() => rpc('startDownload', { repo: item.repo })}>Resume</a>
             )}
+            {item.state !== 'downloading' && item.state !== 'queued' && (
+              <a onClick={() => rpc('dismissDownload', { repo: item.repo })}>Dismiss</a>
+            )}
           </div>
           {item.state === 'error' && item.message && (
             <div className="small" style={{ color: 'var(--vscode-errorForeground)' }}>
@@ -107,7 +110,7 @@ function ConvertCard({ item }: { item: ConvertItem }) {
     <div className="card col">
       <div className="row spread">
         <strong title={item.repo}>
-          {shortRepo(item.repo)} → {item.bits}-bit
+          {shortRepo(item.repo)} → {item.bits === 16 ? 'bf16' : `${item.bits}-bit`}
         </strong>
         <span className="small muted">{CONVERT_LABEL[item.state]}</span>
       </div>
@@ -120,6 +123,14 @@ function ConvertCard({ item }: { item: ConvertItem }) {
         <span title={item.outPath}>{item.message ?? ''}</span>
         {(item.state === 'converting' || item.state === 'downloading') && (
           <a onClick={() => rpc('cancelConvert', { repo: item.repo })}>Cancel</a>
+        )}
+        {(item.state === 'error' || item.state === 'canceled') && (
+          // Retry restarts from the download phase; files already on disk
+          // are cache hits, so it catches up to where it stopped quickly.
+          <a onClick={() => rpc('convertModel', { repo: item.repo, bits: item.bits })}>Retry</a>
+        )}
+        {(item.state === 'error' || item.state === 'canceled' || item.state === 'done') && (
+          <a onClick={() => rpc('dismissConvert', { repo: item.repo, bits: item.bits })}>Dismiss</a>
         )}
       </div>
       {item.state === 'error' && item.message && (

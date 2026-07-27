@@ -1,5 +1,7 @@
 import * as os from 'node:os'
+import * as fs from 'node:fs'
 import { log } from '../../core/logging'
+import { applyToEditor, desiredEnv, detectEditors } from '../../services/vscodeIntegration'
 import { settings } from '../../core/settings'
 import { RootSampler } from '../../services/rootSampler'
 import { manualCommand } from '../../services/rootAccess'
@@ -8,7 +10,7 @@ import { manualCommand } from '../../services/rootAccess'
 const PROCESS_GPU_INTERVAL_MS = 20_000
 import type { Disposable } from '../../core/events'
 import { Config } from '../../config'
-import { fitVerdict } from '../../services/modelFit'
+import { bytesForBits, fitVerdict } from '../../services/modelFit'
 import { staleNotice } from './buildStamp'
 import type { EnvironmentManager } from '../../backend/environmentManager'
 import type { ServerManager } from '../../backend/serverManager'
@@ -37,10 +39,23 @@ import type {
   ServerStatusLite,
   SettingSpec,
   ViewId,
+  VsCodeIntegrationApplyParams,
+  VsCodeIntegrationInfo,
+  VsCodeIntegrationResult,
   WebviewBound,
 } from '../../shared/protocol'
 
 const FALLBACK_MODEL = 'mlx-community/Qwen2.5-Coder-7B-Instruct-4bit'
+
+/** Pipelines mlx-lm cannot serve — embedding models and kin. */
+const EMBEDDING_PIPELINES = new Set([
+  'feature-extraction',
+  'sentence-similarity',
+  'fill-mask',
+  'text-classification',
+  'token-classification',
+  'zero-shot-classification',
+])
 
 
 export interface HubDeps {
@@ -59,6 +74,15 @@ export interface HubDeps {
   extensionUri: { fsPath: string }
   /** URL of the harmony-filtering endpoint, when the host runs one. */
   cleanEndpointUrl?(): string | undefined
+  /**
+   * Which `mlxConsole.*` keys the VS Code cleanup may remove.
+   *
+   * Only the daemon supplies this: for it, keys in the editor's settings.json
+   * are stale remnants. For the embedded extension they are live
+   * configuration, so it must not offer to strip them — leaving this unset
+   * limits cleanup to the retired `mlxServe.*` prefix.
+   */
+  vscodeCleanupKeys?(): string[]
   /** How to ask the user things. Omitted in headless, where nobody is asked. */
   host?: HubHost
 }
@@ -547,13 +571,35 @@ export class WebviewHub {
         const found = await this.deps.hf.search(query)
         // Fit is the one filter the service cannot apply: it depends on this
         // machine's memory, which is the host's knowledge, not the Hub's.
-        let results = found.items.map((m) => ({ ...m, fit: fitVerdict(m.sizeBytes, budget) }))
+        // A convertible repo is judged by what conversion would produce, not
+        // by its full-precision bytes — the 70B bf16 that "doesn't fit" is
+        // the archetypal convert candidate, and hiding it defeated the point.
+        let results = found.items.map((m) => {
+          // mlx-lm implements text generation only. The README long promised
+          // that embedding repos say so on their card; the pipeline tag was
+          // fetched all along and never read.
+          const embedding = m.pipelineTag !== undefined && EMBEDDING_PIPELINES.has(m.pipelineTag)
+          const format = embedding && m.format !== 'mlx' ? ('unsupported' as const) : m.format
+          const convertBytes =
+            format === 'convertible' && m.paramsB ? bytesForBits(m.paramsB, 4) : undefined
+          const basis = convertBytes !== undefined ? Math.min(m.sizeBytes ?? Infinity, convertBytes) : m.sizeBytes
+          return {
+            ...m,
+            format,
+            fit: fitVerdict(Number.isFinite(basis) ? basis : undefined, budget),
+            fitBasis: convertBytes !== undefined ? ('4bit' as const) : ('as-is' as const),
+          }
+        })
         if (query.onlyFits) results = results.filter((m) => m.fit !== 'too-large')
         const limit = query.limit ?? 30
         return {
           items: results.slice(0, limit),
           total: results.length,
           truncated: results.length > limit,
+          // Counted over the full filtered set: computing these from the
+          // sliced page next to the unsliced total mixed two scopes.
+          mlxTotal: results.filter((m) => m.format === 'mlx').length,
+          convertibleTotal: results.filter((m) => m.format === 'convertible').length,
           scanned: found.scanned,
           exhausted: found.exhausted,
         }
@@ -564,16 +610,20 @@ export class WebviewHub {
         // The Hub's exact parameter count beats parsing "7B" out of the name;
         // cached after the first ask, and the name-guess remains the fallback.
         const repo = repoOf()
-        const [paramsB, modelType] = await Promise.all([
+        const [paramsB, facts] = await Promise.all([
           this.deps.hf.getParamsB(repo),
-          this.deps.hf.getModelType(repo),
+          this.deps.hf.getConfigFacts(repo),
         ])
         // mlx-lm itself answers whether the architecture exists; unanswerable
         // (env not ready, config missing) means no gate rather than a refusal.
-        const supported = modelType
-          ? await this.deps.cache.archSupported(modelType).catch(() => undefined)
+        const supported = facts.modelType
+          ? await this.deps.cache.archSupported(facts.modelType).catch(() => undefined)
           : undefined
-        return this.deps.convert.plan(repo, paramsB, { modelType, supported })
+        return this.deps.convert.plan(repo, paramsB, {
+          modelType: facts.modelType,
+          supported,
+          prequantized: facts.prequantized,
+        })
       }
       case 'convertModel': {
         const { repo, bits } = params as { repo: string; bits?: number }
@@ -601,13 +651,31 @@ export class WebviewHub {
         return this.deps.env.status.ready ? this.deps.cache.top() : { processes: [] }
       case 'deleteModel': {
         const repo = repoOf()
+        // Deleting under a live worker tears the directory out from beneath
+        // it — the helper recreates files and the "freed" number is a lie.
+        if (this.deps.downloads.isActive(repo)) {
+          return { ok: false, error: 'This repo is downloading — cancel the download first.' }
+        }
+        if (this.deps.convert.isActive(repo)) {
+          return { ok: false, error: 'This repo is converting — cancel the conversion first.' }
+        }
+        const isPath = repo.startsWith('/')
+        const resident = this.deps.server.loadedModel === repo
+        const isDefault = Config.defaultModel() === repo
         const confirmed = await this.confirm({
-          message: `Delete "${repo}" from the model cache?`,
-          detail: 'This permanently removes the downloaded files from disk.',
+          message: isPath ? `Delete the converted model at ${repo}?` : `Delete "${repo}" from the model cache?`,
+          detail:
+            'This permanently removes the files from disk.' +
+            (resident ? ' It is the RESIDENT model — the server keeps serving it from memory until restarted.' : '') +
+            (isDefault ? ' It is also your default model; clear or change that setting after.' : ''),
           action: 'Delete',
         })
         if (!confirmed) return { ok: false, canceled: true }
         const res = await this.deps.cache.delete(repo)
+        // The record of having downloaded/converted it goes with the files —
+        // a "Complete" card pointing at a deleted directory helped nobody.
+        this.deps.downloads.remove(repo)
+        this.deps.convert.removeByOutput?.(repo)
         await this.refreshModels()
         this.host.reportInfo?.(`MLX: deleted ${repo} (freed ${formatBytes(res.freedBytes)}).`)
         return { ok: true, ...res }
@@ -618,6 +686,14 @@ export class WebviewHub {
       case 'cancelDownload':
         this.deps.downloads.cancel(repoOf())
         return { ok: true }
+      case 'dismissDownload':
+        this.deps.downloads.remove(repoOf())
+        return { ok: true }
+      case 'dismissConvert': {
+        const p = params as { repo: string; bits?: number }
+        this.deps.convert.remove(p.repo, p.bits)
+        return { ok: true }
+      }
       case 'launchModel': {
         const ok = await this.deps.server.warmUp(repoOf())
         return { ok }
@@ -702,9 +778,82 @@ export class WebviewHub {
       }
       case 'setWiredLimit':
         return this.setWiredLimit(Number((params as { megabytes?: unknown })?.megabytes))
+      case 'getVsCodeIntegration':
+        return this.vsCodeIntegration()
+      case 'applyVsCodeIntegration':
+        return this.applyVsCodeIntegration(params as VsCodeIntegrationApplyParams)
       default:
         throw new Error(`Unknown method: ${method}`)
     }
+  }
+
+  /**
+   * What a "wire Claude Code" write would do, per installed editor.
+   *
+   * Recomputed on every call rather than cached: the right base URL and model
+   * follow the clean endpoint and the resident model around.
+   */
+  private vsCodeIntegration(): VsCodeIntegrationInfo {
+    const cleanUrl = this.deps.cleanEndpointUrl?.()
+    const endpointPort = cleanUrl ? Number(new URL(cleanUrl).port) : Config.cleanEndpointPort()
+    const model = this.deps.server.activeModel || Config.defaultModel() || FALLBACK_MODEL
+    const env = desiredEnv({
+      anthropicBaseUrl: cleanUrl ?? `http://127.0.0.1:${endpointPort}`,
+      model,
+    })
+    const editors = detectEditors({
+      desired: env,
+      cleanupKeys: this.deps.vscodeCleanupKeys?.(),
+      io: { exists: fs.existsSync, read: (p) => fs.readFileSync(p, 'utf8') },
+    })
+    const snippet = env.map((e) => `export ${e.name}="${e.value}"`).join('\n') + '\nclaude'
+    return { editors, env, endpointRunning: Boolean(cleanUrl), endpointPort, model, snippet }
+  }
+
+  private async applyVsCodeIntegration(
+    params: VsCodeIntegrationApplyParams,
+  ): Promise<VsCodeIntegrationResult> {
+    // Desired state is recomputed at apply time; the info the page rendered
+    // may be minutes old and a different model resident by now.
+    const info = this.vsCodeIntegration()
+    const chosen = info.editors.filter((e) => params.editors?.includes(e.id) && e.installed)
+    if (!chosen.length) return { results: [] }
+
+    const what = params.wire
+      ? 'Write Claude Code settings into'
+      : params.unwire
+        ? 'Remove the Claude Code wiring from'
+        : 'Remove stale MLX settings from'
+    const confirmed = await this.confirm({
+      message: `${what} ${chosen.map((e) => e.label).join(', ')}?`,
+      detail:
+        (params.wire
+          ? 'While wired, Claude Code talks only to this server — its own Anthropic ' +
+            'models are unavailable until the wiring is removed. '
+          : '') +
+        'A timestamped backup is written next to each settings.json first. ' +
+        'If an editor has unsaved changes open in its settings editor, save or close ' +
+        'them before continuing — editors merge external edits otherwise.',
+      action: params.wire ? 'Write settings' : params.unwire ? 'Remove wiring' : 'Clean up',
+    })
+    if (!confirmed) return { results: [] }
+
+    const io = {
+      exists: fs.existsSync,
+      read: (p: string) => fs.readFileSync(p, 'utf8'),
+      write: (p: string, t: string) => fs.writeFileSync(p, t),
+    }
+    const results = chosen.map((e) => ({
+      editor: e.id,
+      ...applyToEditor({
+        settingsPath: e.settingsPath,
+        env: params.wire ? info.env : undefined,
+        unwire: params.unwire,
+        removeKeys: params.cleanup ? e.staleKeys : undefined,
+        io,
+      }),
+    }))
+    return { results }
   }
 
   private async sendInitial(webview: MessageSink) {

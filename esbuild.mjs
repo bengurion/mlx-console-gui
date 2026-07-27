@@ -17,6 +17,13 @@ const watch = process.argv.includes('--watch')
 const BUILD_ID = JSON.stringify(new Date().toISOString())
 const define = { __BUILD_ID__: BUILD_ID }
 
+/**
+ * jsonc-parser's `main` is a UMD build whose inner requires esbuild cannot
+ * statically follow — they survive into the bundle and fail at runtime with
+ * "Cannot find module './impl/format'". The ESM build bundles completely.
+ */
+const alias = { 'jsonc-parser': 'jsonc-parser/lib/esm/main.js' }
+
 /** @type {import('esbuild').BuildOptions} */
 const extensionConfig = {
   entryPoints: ['src/extension.ts'],
@@ -26,6 +33,7 @@ const extensionConfig = {
   format: 'cjs',
   target: 'node18',
   external: ['vscode'],
+  alias,
   sourcemap: !production,
   minify: production,
   define,
@@ -44,6 +52,7 @@ const cliConfig = {
   platform: 'node',
   format: 'cjs',
   target: 'node18',
+  alias,
   sourcemap: !production,
   minify: production,
   banner: { js: '#!/usr/bin/env node' },
@@ -66,6 +75,7 @@ const electronMainConfig = {
   format: 'cjs',
   target: 'node20',
   external: ['electron'],
+  alias,
   sourcemap: !production,
   minify: production,
   define,

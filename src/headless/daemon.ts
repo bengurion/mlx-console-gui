@@ -20,6 +20,7 @@ import { occupancyBytes } from '../services/modelConfig'
 import { SettingsStore, extractMlxSettings, parseJsonc } from './settingsStore'
 import { HeadlessServer } from './serverControl'
 import { settingsCandidates } from './hostPaths'
+import { runtimeSettingKeys } from '../services/vscodeIntegration'
 import { setSettingsSource } from '../core/settings'
 import { EnvironmentManager } from '../backend/environmentManager'
 import { ServerManager } from '../backend/serverManager'
@@ -229,28 +230,69 @@ function buildApp(dir: string, helper: string | undefined, hubHost: HubHost) {
 
   const python = helper ? new PythonHelper(env, helper) : undefined
   const metrics = new MetricsService(env, server)
+  const hf = new HuggingFaceService()
+  const downloads = python ? new DownloadManager(python) : undefined
+  const cache = python ? new CacheService(python) : undefined
+  const convert = python ? new ConvertManager(env, python) : undefined
+  if (downloads && convert && cache) {
+    // The two managers must know about each other, or a download and a
+    // convert of the same repo become two unrelated helpers racing the same
+    // blobs directory.
+    downloads.busyElsewhere = (repo) =>
+      convert.isActive(repo) ? 'A conversion of this repo is already downloading it.' : undefined
+    convert.busyElsewhere = (repo) =>
+      downloads.isActive(repo) ? 'This repo is already downloading — wait for it or cancel it first.' : undefined
+    // Facts feed the convert gates on every entry path, palette included.
+    convert.facts = async (repo) => {
+      const [paramsB, factsRes] = await Promise.all([
+        hf.getParamsB(repo).catch(() => undefined),
+        hf.getConfigFacts(repo).catch(() => undefined),
+      ])
+      const supported = factsRes?.modelType
+        ? await cache.archSupported(factsRes.modelType).catch(() => undefined)
+        : undefined
+      return {
+        paramsB,
+        arch: factsRes
+          ? { modelType: factsRes.modelType, supported, prequantized: factsRes.prequantized }
+          : undefined,
+      }
+    }
+  }
 
   // Same filtered endpoint the extension offers, for the same reason: without
   // it, a gpt-oss answer arrives with the model's reasoning in front of it.
-  const cleanEndpoint = new HarmonyProxy({ upstream: () => server.baseUrl() })
-  const hub = python
-    ? new WebviewHub({
+  // The load callbacks keep the registry honest when an API client (Claude
+  // Code, most likely) swaps the resident model inside one of its requests.
+  const cleanEndpoint = new HarmonyProxy({
+    upstream: () => server.baseUrl(),
+    onModelUse: (m) => server.beginModelUse(m),
+    onModelServed: (m) => server.confirmModelLoaded(m),
+    onModelFailed: () => server.abortModelLoad(),
+  })
+  const hub =
+    python && downloads && cache && convert
+      ? new WebviewHub({
         env,
         server,
-        hf: new HuggingFaceService(),
-        cache: new CacheService(python),
-        downloads: new DownloadManager(python),
-        convert: new ConvertManager(env, python),
+        hf,
+        cache,
+        downloads,
+        convert,
         metrics,
         packageJSON: pkg,
         extensionUri: { fsPath: dir },
         host: hubHost,
         cleanEndpointUrl: () => cleanEndpoint.url,
-      })
-    : undefined
+        // The daemon may clean runtime keys out of editors' settings.json —
+        // for it they are stale remnants, not configuration (the embedded
+        // extension, which actually reads them, never gets this).
+          vscodeCleanupKeys: () => runtimeSettingKeys(pkg),
+        })
+      : undefined
 
   void env.refresh()
-  return { env, server, metrics, hub, cleanEndpoint }
+  return { env, server, metrics, hub, cleanEndpoint, downloads, convert }
 }
 
 export interface DaemonOptions {
@@ -415,9 +457,14 @@ export function createDaemon(opts: DaemonOptions): Daemon {
      */
     async stop({ keepServer = false } = {}) {
       clearUrlFile()
+      // The workers first: downloads and conversions spawn children that
+      // outlive this process if nobody tells them to stop — the orphaned
+      // helpers that kept downloading behind a dead app's back.
+      app.downloads?.dispose()
+      app.convert?.dispose()
       await app.cleanEndpoint.stop()
       if (!keepServer) {
-        const { stopped, forced } = await server.stopAll()
+        const { stopped, forced, survivors } = await server.stopAll()
         const total = stopped.length + forced.length
         // Reported either way: silence here reads as "it did not clean up".
         log.info(
@@ -426,6 +473,12 @@ export function createDaemon(opts: DaemonOptions): Daemon {
                 (forced.length ? ` (${forced.length} needed SIGKILL).` : '.')
             : 'No model servers were running.',
         )
+        if (survivors.length) {
+          log.error(
+            `Server pid(s) ${survivors.join(', ')} survived SIGKILL — stuck in GPU work, ` +
+              'still holding wired memory. `mlx-console stop --all` once the call returns.',
+          )
+        }
       }
       await ui.stop()
     },

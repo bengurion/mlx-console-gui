@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.0.28 — Unreleased
+
+The download and convert workflow stops leaking processes and stops misreporting itself — 32 defects from a full review of the pipeline.
+
+- **Downloads are owned, not fired and forgotten** — helpers from a dead session used to keep downloading invisibly (no UI entry, cancel and delete no-ops); the manager now reaps orphans at startup and before starting a tracked download of the same repo, cancel escalates SIGTERM→SIGKILL, and the daemon's quit path finally disposes the download and convert managers so their children die with the app.
+- **A download and a convert of the same repo can no longer race** — the two managers know about each other and refuse politely.
+- **Downloads fetch only what mlx-lm can use** — alternate-format copies (`original/`, `metal/`, `.bin`, GGUF, …) are skipped; gpt-oss-120b drops from 195 GB fetched to ~65 GB.
+- **Progress stops double-counting** — the byte watcher no longer follows the cache's symlinks, which pinned every bar at 100% from the halfway mark.
+- **Diagnosed failures surface immediately** — a 404/gated/bad-token error was retried as "Connection lost" for 80 seconds before showing its real message.
+- **Search knows your disk** — models already in the cache show "Downloaded ✓" with a Launch button (and partials "Resume download") instead of an enabled Download; convertible repos get their fit verdict from what a 4-bit conversion would occupy, not the full-precision bytes that made every big convert candidate read "too large"; embedding-pipeline repos are marked unsupported on the card, as the README always claimed; the result counts describe the whole result set, not the visible page.
+- **Cancel/Retry on a conversion no longer self-destructs** — cancel held no guard, so a fast Retry started a run the old run's cleanup then deleted; the guard now holds until the process actually closes, spawn failures keep their real error instead of a phantom "Canceled", and every entry path (command palette included) passes the architecture and pre-quantized gates.
+- **Converted outputs keep their org** (`Qwen--X-4bit`), so two orgs' same-named models stop colliding; a second bit width no longer erases the first's card; bf16 is labeled bf16.
+- **Cards can be dismissed** — done/error/canceled downloads and converts have a Dismiss action instead of living forever; deleting a model clears its cards, is refused while the repo is downloading/converting, names the path honestly for converted models, and warns when it is the resident or default model.
+- **Download state survives restarts everywhere** — persistence now works with the default (empty) models directory, merges with other hosts' entries instead of clobbering them, and always flushes on quit.
+- One pre-quantized name list instead of three divergent ones, and the Models page shows live "Downloading…" feedback on Resume.
+
+## 0.0.27 — Unreleased
+
+The console stops guessing about resident models — and stops claiming kills it never verified.
+
+- **API-initiated loads show up in the GUI** — when Claude Code (or any client on the clean endpoint) names a model, the server loads it *inside that request*, and the console used to never find out: the dashboard kept showing the previous model while tens of gigabytes belonged to another. The proxy now reports every request's model — loading state during the stall, confirmed residency on success — to the registry every window reads. Traffic on the raw port remains invisible (the server has no residency endpoint to ask); the README says so now.
+- **Launch verifies instead of trusting** — clicking Launch on the model the registry *believed* was resident used to be a silent no-op, which is how "I started Qwen but the other 40 GB is still there" happened. A launch now always sends the 1-token verification request: free when the registry was right (the server does not re-read weights it already has), and exactly the load you asked for when it was wrong.
+- **Stops verify their kills** — `stopAll` (which the app's quit path uses) sent SIGKILL and reported success without checking. On this hardware a process wedged in an uninterruptible Metal call survives even SIGKILL until the driver returns — still holding the port and the wired weights, which is the "40 GB with nothing running" zombie. All stop paths now re-poll after SIGKILL and name the survivors instead of pretending; the quit path, the palette command, and `mlx-console stop --all` all say so out loud.
+- **A quit that gives up says so** — the app's graceful-quit timeout used to fire silently, quitting with the cleanup still in flight; it now logs that a server may still be running.
+- **Remote mode never spawns a server** — the extension's chat provider used to spawn one itself when the daemon's server was down, built from the *editor's* settings, which in remote mode are not the configuration: the result was a bare-flag server (unbounded prompt cache, default concurrency) running behind the app's back. A thin-client window now asks the daemon to start the server, and offers to launch the app when no daemon is reachable.
+
+## 0.0.26 — Unreleased
+
+One owner per surface: the app runs the UI, the editor keeps the chat — and the app can now wire Claude Code for you.
+
+- **The app writes Claude Code's settings — and takes them back out** — a Claude Code card on the Clients page detects every installed editor (VS Code, Cursor, Insiders, VSCodium), shows the five `claudeCode.environmentVariables` it would write — base URL pointed at the filtered endpoint's Anthropic route, the exact model id for `ANTHROPIC_MODEL` *and* `ANTHROPIC_SMALL_FAST_MODEL` (forgetting the second 404s every subagent) — and writes them on click. The card is explicit that wiring is **a switch, not an extra model**: `ANTHROPIC_BASE_URL` redirects everything Claude Code sends, so Anthropic's own models are unavailable while wired — which is why there is an equally one-click **Remove wiring** that strips exactly the managed entries and leaves yours, and a copyable terminal snippet for one-off sessions that never touch settings. Edits go through jsonc-parser, so comments and formatting survive; a timestamped backup lands next to each settings.json first; a file that does not parse is refused, never overwritten. The same card cleans up stale keys: the retired `mlxServe.*` prefix everywhere, and — from the app only, which does not read them — `mlxConsole.*` runtime keys the extension ignores in remote mode.
+- **Remote mode goes chat-only** — with the desktop app installed, the extension no longer duplicates the app's panels; the activity bar shows a single view pointing at the app, and everything editor-native stays: the chat model picker, the `@mlx` participant, the status bar, and the server commands (which drive the app's daemon). Panel commands like Search or Manage Models open the app. Embedded mode — no app installed — keeps all six panels exactly as before.
+- **Remote mode names its ignored settings** — with the desktop app installed, runtime keys in VS Code's settings.json (`mlxConsole.server.*`, `modelsDir`, …) are read only by embedded mode, and nothing said so: they sat there looking like live configuration, drifting from what the app actually ran. The extension now warns once per set of offenders — client-only keys (`mode`, `daemonUrl`) excepted — and offers to delete them through the configuration API, the one safe writer of VS Code's JSONC. Dismissing the warning silences that exact set; a new stray key re-arms it.
+
+## 0.0.25 — Unreleased
+
+Claude Code can now run on the local model.
+
+- **The filtered endpoint speaks the Anthropic Messages API** — `POST /v1/messages` (and `count_tokens`) on the clean-endpoint port, translated to and from the upstream's chat completions, streaming included. Point Claude Code at it with `ANTHROPIC_BASE_URL=http://localhost:<cleanEndpoint.port>` plus `ANTHROPIC_MODEL`/`ANTHROPIC_SMALL_FAST_MODEL` set to the exact repo id, and the local model answers; previously this 404'd, which Anthropic clients report as "There's an issue with the selected model". Harmony filtering applies on this route too, so gpt-oss reasoning stays out of the answer.
+- **Packaging works again** — `@noble/hashes` v2 (ESM-only) broke electron-builder's blockmap step with `ERR_REQUIRE_ESM`; an npm override pins it to 1.x under `app-builder-lib`.
+
+## 0.0.24 — Unreleased
+
+Empty chat turns explain themselves instead of surfacing as "Sorry, no response was returned".
+
+- **Every chat turn is measured** — one log line per request with time to first token, total time, visible/thinking character counts, tool calls, and the finish reason, so a misbehaving agent-mode session can be diagnosed from the output channel instead of guessed at.
+- **Empty turns say why** — a stream that completes with no visible text and no tool calls (typically a reasoning model spending its whole output budget in the analysis channel) now reports what happened and what to change, instead of leaving the chat UI to show a generic error that agent mode retries in a loop.
+- **A failed conversion can be relaunched** — errored and canceled convert cards grow a **Retry** link (the source snapshot is cached, so a retry skips straight to conversion), a failed run cleans up its half-written output instead of blocking the retry with "already exists", and a refused retry writes the reason onto the card instead of silently doing nothing.
+- **Pre-quantized detection reads the config, not just the name** — the repo's own `quantization_config` now decides whether a convert is refused up front, so NVFP4/FP8 repos (modelopt/compressed-tensors, e.g. Nemotron-3-Super-NVFP4) are caught before `mlx_lm.convert` dies mid-run on a `weight_scale` tensor. mxfp4 stays convertible — mlx_lm dequantizes it, and gpt-oss ships that way. The refusal names the actual format, `nvfp4` joins the name-based fallback and the search-card quant labels.
+
 ## 0.0.23
 
 First release published to GitHub, with the DMG and VSIX attached.

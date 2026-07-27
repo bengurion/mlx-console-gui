@@ -34,7 +34,14 @@ export function convertedRoot(): string {
  */
 export function downloadsStateFile(): string | undefined {
   const modelsDir = Config.modelsDir()
-  return modelsDir ? path.join(modelsDir, '.mlx-downloads.json') : undefined
+  if (modelsDir) return path.join(modelsDir, '.mlx-downloads.json')
+  // No configured models directory (the shipped default) used to mean no
+  // persistence at all — interrupted downloads silently vanished on restart.
+  try {
+    return path.join(os.homedir(), '.mlx-console', 'downloads.json')
+  } catch {
+    return undefined
+  }
 }
 
 export function mlxProcessEnv(): NodeJS.ProcessEnv {

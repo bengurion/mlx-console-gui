@@ -90,6 +90,17 @@ export class ServerManager {
   private readonly _onDidChange = new Emitter<ServerStatus>()
   readonly onDidChange = this._onDidChange.event
 
+  /**
+   * Remote mode: ask the daemon to start the server instead of spawning one.
+   *
+   * A thin-client window must never spawn its own server — it would build the
+   * command line from *this editor's* settings, which in remote mode are not
+   * the configuration (the app's config.json is). That is exactly how a chat
+   * request once spawned a bare-flag server: no prompt-cache bound, no
+   * concurrency limit, invisible to the app that thought it owned the port.
+   */
+  remoteStarter: (() => Promise<boolean>) | undefined
+
   readonly client: MlxClient
 
   private readonly env: EnvironmentManager
@@ -187,6 +198,13 @@ export class ServerManager {
       // window's model on its next read rather than immediately.
       log.warn(`Could not watch shared server state: ${String(err)}`)
     }
+    // Belt to the watcher's braces: macOS fs.watch misses in-place writes
+    // from another process often enough that the GUI sat on a stale model
+    // until someone refreshed by hand. Adoption is cheap (one small file
+    // read, early-returns when nothing changed), so poll as a fallback.
+    const poll = setInterval(() => void this.adoptSharedState(), 5000)
+    poll.unref?.()
+    this.watcherSubs.push({ dispose: () => clearInterval(poll) })
   }
 
   /**
@@ -226,7 +244,13 @@ export class ServerManager {
       this.dropDeadAdoption()
       return
     }
-    if (this._loadedModel === shared.loadedModel && this._modelState === 'loaded') return
+    if (this._loadedModel === shared.loadedModel && this._modelState === 'loaded') {
+      // Same model, but the record may know something we do not: the pid.
+      // Metrics attribute the model's memory by reading that process's RSS —
+      // without it, an idle model's gigabytes get blamed on "other apps".
+      this._externalPid ??= shared.pid
+      return
+    }
 
     this._loadedModel = shared.loadedModel
     this._activeModel ??= shared.loadedModel
@@ -238,9 +262,22 @@ export class ServerManager {
     this._onDidChange.fire(this.status)
   }
 
+  /** How to find the pid listening on a port; swappable for tests. */
+  portHolder: (port: number) => Promise<number | undefined> = whoHasPort
+
   /** Record our state so other windows can pick it up. */
   private async publishSharedState(): Promise<void> {
     if (!this.stateFile) return
+    /*
+     * A load confirmed for a server this window never spawned (adopted, or
+     * reported by the proxy) can leave the pid unknown — and a pid-less
+     * record breaks memory attribution everywhere: metrics cannot read the
+     * server's RSS, so an idle model's memory shows under "other apps".
+     * Resolve it from the port before writing.
+     */
+    if (!this.proc && this._externalPid === undefined) {
+      this._externalPid = await this.portHolder(Config.serverPort())
+    }
     const state: SharedServerState = {
       pid: this.proc?.pid ?? this._externalPid,
       port: Config.serverPort(),
@@ -300,6 +337,8 @@ export class ServerManager {
   }
 
   setActiveModel(model: string | undefined) {
+    // Every proxied request reports its model; only genuine changes are news.
+    if (this._activeModel === model) return
     this._activeModel = model
     this._onDidChange.fire(this.status)
   }
@@ -340,6 +379,20 @@ export class ServerManager {
   }
 
   private async start(interactive: boolean): Promise<boolean> {
+    if (this.remoteStarter) {
+      // No env check either: the daemon owns the venv, and this window may
+      // not even have one.
+      if (await this.client.ping()) {
+        this.setState('ready', 'Connected to existing server')
+        return true
+      }
+      this.setState('starting')
+      const ok = (await this.remoteStarter()) && (await this.waitForPing())
+      if (ok) this.setState('ready')
+      else this.setState('error', 'The MLX Console GUI app could not start the server.')
+      return ok
+    }
+
     const ready = await this.env.ensureReady(interactive)
     if (!ready) {
       this.setState('error', 'Environment not ready')
@@ -427,6 +480,16 @@ export class ServerManager {
     return ok
   }
 
+  /** Like waitForReady, for a server whose process belongs to the daemon. */
+  private async waitForPing(): Promise<boolean> {
+    const deadline = Date.now() + READY_TIMEOUT_MS
+    while (Date.now() < deadline) {
+      if (await this.client.ping()) return true
+      await delay(READY_POLL_MS)
+    }
+    return false
+  }
+
   private async waitForReady(): Promise<boolean> {
     const deadline = Date.now() + READY_TIMEOUT_MS
     while (Date.now() < deadline) {
@@ -449,12 +512,17 @@ export class ServerManager {
   private warmUps = new Map<string, Promise<boolean>>()
 
   async warmUp(model: string): Promise<boolean> {
-    // Already resident: re-requesting would reload the same weights, which for
-    // a large model is minutes of work to arrive back where we started.
-    if (this._modelState === 'loaded' && this._loadedModel === model) {
-      this.setActiveModel(model)
-      return true
-    }
+    /*
+     * No "already loaded" fast path, deliberately. The cached state can lie:
+     * any API client can displace the resident model inside one of its own
+     * requests, and traffic on the raw port leaves no trace at all — trusting
+     * the cache here once turned a Launch click into a silent no-op while
+     * 40 GB of a different model sat resident. Verifying is cheap: the server
+     * compares `(model, adapter, draft)` keys and does NOT re-read weights
+     * for a model it already has, so when the cache was right this request
+     * costs one token; when it was wrong, it performs exactly the load the
+     * user asked for.
+     */
     const existing = this.warmUps.get(model)
     if (existing) return existing
 

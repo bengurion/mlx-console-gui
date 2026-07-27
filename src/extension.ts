@@ -26,7 +26,7 @@ import { HarmonyProxy } from './services/harmonyProxy'
 import { ReviewService } from './features/reviewService'
 import { appInstalled, discover, launchApp } from './services/daemonClient'
 import { readInstallRoot } from './headless/installRoot'
-import { RemoteHub } from './ui/remoteHub'
+import { ignoredKeys, fingerprint, describeKeys } from './services/ignoredSettings'
 
 /**
  * Bring the previous name's storage with us.
@@ -84,6 +84,9 @@ export async function activate(context: vscode.ExtensionContext) {
   // reads a setting.
   setSettingsSource(new VsCodeSettings())
   if (runtimeMode() === 'remote') return activateRemote(context)
+  // Drives the `when` clauses on the contributed views: embedded shows the
+  // panels, remote shows only the welcome view pointing at the app.
+  void vscode.commands.executeCommand('setContext', 'mlxConsole.embedded', true)
   log.info('MLX Console GUI activating')
   carryStorageAcrossRename(context)
 
@@ -103,6 +106,25 @@ export async function activate(context: vscode.ExtensionContext) {
   const cache = new CacheService(helper)
   const downloads = new DownloadManager(helper)
   const convert = new ConvertManager(env, helper)
+  downloads.busyElsewhere = (repo) =>
+    convert.isActive(repo) ? 'A conversion of this repo is already downloading it.' : undefined
+  convert.busyElsewhere = (repo) =>
+    downloads.isActive(repo) ? 'This repo is already downloading — wait for it or cancel it first.' : undefined
+  convert.facts = async (repo) => {
+    const [paramsB, factsRes] = await Promise.all([
+      hf.getParamsB(repo).catch(() => undefined),
+      hf.getConfigFacts(repo).catch(() => undefined),
+    ])
+    const supported = factsRes?.modelType
+      ? await cache.archSupported(factsRes.modelType).catch(() => undefined)
+      : undefined
+    return {
+      paramsB,
+      arch: factsRes
+        ? { modelType: factsRes.modelType, supported, prequantized: factsRes.prequantized }
+        : undefined,
+    }
+  }
   const metrics = new MetricsService(env, server)
   metrics.elevate = vscodeElevate
 
@@ -111,7 +133,15 @@ export async function activate(context: vscode.ExtensionContext) {
    * than this extension see the answer rather than the model's reasoning and
    * control tokens. Off by default; the raw server is untouched either way.
    */
-  const cleanEndpoint = new HarmonyProxy({ upstream: () => server.baseUrl() })
+  const cleanEndpoint = new HarmonyProxy({
+    upstream: () => server.baseUrl(),
+    // Claude Code (and any Anthropic/OpenAI client on this port) loads models
+    // lazily inside its requests; without these the registry and every panel
+    // kept showing whichever model the console itself loaded last.
+    onModelUse: (m) => server.beginModelUse(m),
+    onModelServed: (m) => server.confirmModelLoaded(m),
+    onModelFailed: () => server.abortModelLoad(),
+  })
   const hub = new WebviewHub({
     env,
     server,
@@ -223,6 +253,11 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('mlxConsole.setup', () => env.ensureReady(true)),
     vscode.commands.registerCommand('mlxConsole.showLogs', () => log.show()),
     vscode.commands.registerCommand('mlxConsole.showMenu', () => showMenu(env, server)),
+    // Contributed for remote mode's welcome view; in embedded there is no app,
+    // so the closest thing it can open is the panel dashboard.
+    vscode.commands.registerCommand('mlxConsole.openApp', () =>
+      vscode.commands.executeCommand('mlxConsole.dashboard.focus'),
+    ),
     vscode.commands.registerCommand('mlxConsole.startServer', () => server.ensureRunning(true)),
     vscode.commands.registerCommand('mlxConsole.stopServer', () => server.stop()),
     vscode.commands.registerCommand('mlxConsole.stopAllServers', async () => {
@@ -232,8 +267,15 @@ export async function activate(context: vscode.ExtensionContext) {
        * with nobody tracking it. This finds them by what they are rather than
        * by what we remembered, so there is a deliberate way to clean up.
        */
-      const { stopped, forced } = await stopAllServers()
+      const { stopped, forced, survivors } = await stopAllServers()
       const total = stopped.length + forced.length
+      if (survivors.length) {
+        void vscode.window.showWarningMessage(
+          `MLX: pid ${survivors.join(', ')} survived SIGKILL — stuck in GPU work and still ` +
+            'holding wired memory. Try again shortly.',
+        )
+        return
+      }
       void vscode.window.showInformationMessage(
         total === 0
           ? 'MLX: no server processes were running.'
@@ -322,6 +364,10 @@ export async function activate(context: vscode.ExtensionContext) {
  */
 async function activateRemote(context: vscode.ExtensionContext): Promise<void> {
   log.info('MLX Console GUI activating (remote — the MLX Console GUI app owns the runtime)')
+  // Hides the panel views: in remote mode the app owns the UI, and a second
+  // copy of it inside the editor was two things to keep in step. Only the
+  // welcome view (pointing at the app) shows in the activity bar.
+  void vscode.commands.executeCommand('setContext', 'mlxConsole.embedded', false)
   const configuredUrl = () =>
     vscode.workspace.getConfiguration('mlxConsole').get<string>('daemonUrl', '')
 
@@ -339,13 +385,10 @@ async function activateRemote(context: vscode.ExtensionContext): Promise<void> {
   const metrics = new MetricsService(env, server)
   metrics.elevate = vscodeElevate
 
-  const hub = new RemoteHub({ endpoint: () => discover(configuredUrl()), log })
-
   context.subscriptions.push(
     statusBar,
     { dispose: () => env.dispose() },
     { dispose: () => server.dispose() },
-    { dispose: () => hub.dispose() },
     metrics,
     env.onDidChange((s) => statusBar.setEnv(s)),
     server.onDidChange((s) => {
@@ -353,8 +396,6 @@ async function activateRemote(context: vscode.ExtensionContext): Promise<void> {
       statusBar.setModel(s.modelState, s.loadedModel, s.lastLoadSeconds)
     }),
   )
-
-  registerWebviews(context, hub)
 
   /** Server control goes through the daemon, which owns the processes. */
   const daemonAction = async (action: 'start' | 'stop' | 'restart') => {
@@ -379,13 +420,52 @@ async function activateRemote(context: vscode.ExtensionContext): Promise<void> {
     if (pick === 'Launch it') void launchApp()
   }
 
+  // The chat provider calls ensureRunning; without this it would spawn a
+  // server from this editor's (client-only) settings. The daemon owns the
+  // server — route the start through it instead.
+  server.remoteStarter = async () => {
+    const ep = await discover(configuredUrl())
+    if (!ep) {
+      void offerLaunch()
+      return false
+    }
+    const res = await fetch(`${ep.origin}/api/server`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(ep.token ? { 'x-mlx-token': ep.token } : {}),
+      },
+      body: JSON.stringify({ action: 'start' }),
+    }).catch(() => undefined)
+    return Boolean(res?.ok)
+  }
+
+  /**
+   * Where the panels used to be. The app owns the UI now, so anything that
+   * previously focused a panel opens the app instead — or the browser
+   * dashboard when the app is not installed but a daemon is reachable.
+   */
+  const openAppOrDashboard = async () => {
+    if (appInstalled()) return void launchApp()
+    const ep = await discover(configuredUrl())
+    if (!ep) return void offerLaunch()
+    void vscode.env.openExternal(vscode.Uri.parse(`${ep.origin}/${ep.token ? `?t=${ep.token}` : ''}`))
+  }
+
   context.subscriptions.push(
     vscode.commands.registerCommand('mlxConsole.startServer', () => daemonAction('start')),
     vscode.commands.registerCommand('mlxConsole.stopServer', () => daemonAction('stop')),
     vscode.commands.registerCommand('mlxConsole.restartServer', () => daemonAction('restart')),
     vscode.commands.registerCommand('mlxConsole.stopAllServers', async () => {
-      const { stopped, forced } = await stopAllServers()
+      const { stopped, forced, survivors } = await stopAllServers()
       const total = stopped.length + forced.length
+      if (survivors.length) {
+        void vscode.window.showWarningMessage(
+          `MLX: pid ${survivors.join(', ')} survived SIGKILL — stuck in GPU work and still ` +
+            'holding wired memory. Try again shortly.',
+        )
+        return
+      }
       void vscode.window.showInformationMessage(
         total === 0
           ? 'MLX: no server processes were running.'
@@ -400,18 +480,12 @@ async function activateRemote(context: vscode.ExtensionContext): Promise<void> {
       ),
     ),
     vscode.commands.registerCommand('mlxConsole.showLogs', () => log.show()),
-    vscode.commands.registerCommand('mlxConsole.showMenu', () =>
-      vscode.commands.executeCommand('mlxConsole.dashboard.focus'),
-    ),
-    vscode.commands.registerCommand('mlxConsole.openSearch', () =>
-      vscode.commands.executeCommand('mlxConsole.search.focus'),
-    ),
-    vscode.commands.registerCommand('mlxConsole.manageModels', () =>
-      vscode.commands.executeCommand('mlxConsole.models.focus'),
-    ),
-    vscode.commands.registerCommand('mlxConsole.convertModel', () =>
-      vscode.commands.executeCommand('mlxConsole.search.focus'),
-    ),
+    vscode.commands.registerCommand('mlxConsole.openApp', openAppOrDashboard),
+    vscode.commands.registerCommand('mlxConsole.showMenu', openAppOrDashboard),
+    vscode.commands.registerCommand('mlxConsole.openSearch', openAppOrDashboard),
+    // Stays routable: it is the LM chat provider's managementCommand.
+    vscode.commands.registerCommand('mlxConsole.manageModels', openAppOrDashboard),
+    vscode.commands.registerCommand('mlxConsole.convertModel', openAppOrDashboard),
     vscode.commands.registerCommand('mlxConsole.testCompletion', () => testCompletion(server)),
     vscode.commands.registerCommand('mlxConsole.openWebUi', async () => {
       const ep = await discover(configuredUrl())
@@ -455,7 +529,67 @@ async function activateRemote(context: vscode.ExtensionContext): Promise<void> {
 
   void env.refresh().then((s) => statusBar.setEnv(s))
   if (!(await discover(configuredUrl()))) void offerLaunch()
+  void warnAboutIgnoredSettings(context)
   log.info('MLX Console GUI activated (remote)')
+}
+
+/**
+ * Say so when VS Code settings are dead weight.
+ *
+ * Remote mode reads runtime settings from the app's config, not from
+ * `mlxConsole.*` — but those keys still sit in settings.json looking exactly
+ * like live configuration, silently drifting from what actually runs. Warn
+ * once per set of offenders, and offer to delete them via the configuration
+ * API (which is the one safe writer of VS Code's JSONC).
+ */
+async function warnAboutIgnoredSettings(context: vscode.ExtensionContext): Promise<void> {
+  const manifest = context.extension.packageJSON as {
+    contributes?: { configuration?: { properties?: Record<string, unknown> } }
+  }
+  const keys = Object.keys(manifest.contributes?.configuration?.properties ?? {})
+    .filter((k) => k.startsWith('mlxConsole.'))
+    .map((k) => k.slice('mlxConsole.'.length))
+
+  const cfg = vscode.workspace.getConfiguration('mlxConsole')
+  const set = keys.map((key) => {
+    const i = cfg.inspect(key)
+    return {
+      key,
+      global: i?.globalValue !== undefined,
+      workspace: i?.workspaceValue !== undefined || i?.workspaceFolderValue !== undefined,
+    }
+  })
+
+  const offenders = ignoredKeys(set)
+  if (!offenders.length) return
+
+  const fp = fingerprint(offenders)
+  log.info(`Remote mode ignores ${offenders.length} VS Code setting(s): ${fp}`)
+  const DISMISSED = 'mlxConsole.ignoredSettingsDismissed'
+  if (context.globalState.get<string>(DISMISSED) === fp) return
+
+  const pick = await vscode.window.showWarningMessage(
+    `MLX: ${describeKeys(offenders)} in VS Code settings ${offenders.length === 1 ? 'is' : 'are'} ` +
+      'ignored while the MLX Console GUI app owns the runtime. The app is the live store — ' +
+      'edit settings in the MLX panel or its dashboard.',
+    'Remove from VS Code',
+    'Keep',
+  )
+  if (pick === 'Remove from VS Code') {
+    for (const o of offenders) {
+      const c = vscode.workspace.getConfiguration('mlxConsole')
+      if (o.global) await c.update(o.key, undefined, vscode.ConfigurationTarget.Global)
+      // A window without a workspace has nowhere to write; skip quietly.
+      if (o.workspace && vscode.workspace.workspaceFolders?.length) {
+        await c.update(o.key, undefined, vscode.ConfigurationTarget.Workspace).then(undefined, () => undefined)
+      }
+    }
+    void vscode.window.showInformationMessage(
+      `MLX: removed ${offenders.length} unused setting${offenders.length === 1 ? '' : 's'}.`,
+    )
+  } else if (pick === 'Keep') {
+    await context.globalState.update(DISMISSED, fp)
+  }
 }
 
 async function maybeOnboard(

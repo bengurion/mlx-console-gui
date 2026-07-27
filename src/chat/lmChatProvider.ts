@@ -297,11 +297,26 @@ class MlxLmChatProvider {
     const harmony = new HarmonyFilter()
     const textToolCalls: Array<{ name: string; args: string }> = []
 
+    // What this turn actually delivered. A stream can complete "successfully"
+    // with nothing visible — e.g. a reasoning model that spends its whole
+    // output budget in the analysis channel — and the chat UI reports that as
+    // a generic request error. Count what we report so the log says why.
+    const started = Date.now()
+    let firstEventAt: number | undefined
+    let visibleChars = 0
+    let thinkingChars = 0
+    let toolCallParts = 0
+    let finishReason: string | null = null
+
     const emit = (events: ReturnType<HarmonyFilter['push']>) => {
       for (const h of events) {
-        if (h.type === 'content') progress.report(new vscode.LanguageModelTextPart(h.text))
-        else if (h.type === 'reasoning') reportThinking(progress, h.text)
-        else textToolCalls.push({ name: h.name, args: h.args })
+        if (h.type === 'content') {
+          visibleChars += h.text.length
+          progress.report(new vscode.LanguageModelTextPart(h.text))
+        } else if (h.type === 'reasoning') {
+          thinkingChars += h.text.length
+          reportThinking(progress, h.text)
+        } else textToolCalls.push({ name: h.name, args: h.args })
       }
     }
 
@@ -318,10 +333,13 @@ class MlxLmChatProvider {
         if (token.isCancellationRequested) break
         // Any event proves the server finished loading and started generating.
         this.server.confirmModelLoaded(model.id)
+        firstEventAt ??= Date.now()
         if (ev.type === 'content') {
           emit(harmony.push(ev.text))
         } else if (ev.type === 'toolCallDelta') {
           toolEvents.push(ev)
+        } else if (ev.type === 'done') {
+          finishReason = ev.finishReason
         }
       }
       emit(harmony.flush())
@@ -338,6 +356,7 @@ class MlxLmChatProvider {
           continue
         }
         progress.report(new vscode.LanguageModelToolCallPart(`harmony_${i}`, call.name, input))
+        toolCallParts++
       }
 
       for (const call of assembleToolCalls(toolEvents)) {
@@ -348,6 +367,29 @@ class MlxLmChatProvider {
           input = {}
         }
         progress.report(new vscode.LanguageModelToolCallPart(call.id, call.function.name, input))
+        toolCallParts++
+      }
+
+      const secs = (ms: number) => `${(ms / 1000).toFixed(1)}s`
+      log.info(
+        `Turn for ${shortName(model.id)}: first token ${firstEventAt ? secs(firstEventAt - started) : 'never'}, ` +
+          `total ${secs(Date.now() - started)}, ${visibleChars} visible chars, ` +
+          `${thinkingChars} thinking chars, ${toolCallParts} tool calls, finish: ${finishReason ?? 'none'}`,
+      )
+
+      // A turn with no visible text and no tool calls renders as a bare error
+      // ("Sorry, no response was returned") and agent mode retries it in a
+      // loop. Say what actually happened instead.
+      if (!token.isCancellationRequested && toolCallParts === 0 && visibleChars === 0) {
+        const why =
+          thinkingChars > 0
+            ? finishReason === 'length'
+              ? `The model spent its entire output budget reasoning (${thinkingChars} characters) and was cut off before answering. ` +
+                'Raise mlxConsole.maxOutputTokens or ask for a lower reasoning effort.'
+              : `The model produced only reasoning (${thinkingChars} characters) and no answer (finish reason: ${finishReason ?? 'none'}).`
+            : `The model returned an empty response (finish reason: ${finishReason ?? 'none'}).`
+        log.warn(`Empty turn for ${shortName(model.id)}: ${why}`)
+        progress.report(new vscode.LanguageModelTextPart(`_${why}_`))
       }
     } catch (err) {
       watch.cancel()

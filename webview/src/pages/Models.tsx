@@ -11,10 +11,21 @@ export function ModelsPage() {
   const [busy, setBusy] = useState<string>()
   const [configuring, setConfiguring] = useState<string>()
   const [error, setError] = useState<string>()
+  const [downloading, setDownloading] = useState<Set<string>>(new Set())
 
   useEffect(() => onPush<LocalModel[]>('models', setModels), [])
   useEffect(() => onPush<ServerStatusLite>('serverStatus', setServer), [])
   useEffect(() => onPush<EnvStatusLite>('envStatus', setEnv), [])
+  // Resume used to give no feedback at all — the page never watched downloads.
+  useEffect(
+    () =>
+      onPush<{ repo: string; state: string }[]>('downloads', (items) =>
+        setDownloading(
+          new Set(items.filter((i) => i.state === 'downloading' || i.state === 'queued').map((i) => i.repo)),
+        ),
+      ),
+    [],
+  )
   useEffect(() => {
     void refresh()
   }, [])
@@ -161,12 +172,20 @@ export function ModelsPage() {
               <div className="row wrap">
                 {partial && !m.local && (
                   <button
-                    disabled={working}
+                    disabled={working || downloading.has(m.repo)}
                     title="Continues the download from the bytes already on disk."
                     onClick={() => rpc('startDownload', { repo: m.repo })}
                   >
-                    Resume download
+                    {downloading.has(m.repo) ? 'Downloading…' : 'Resume download'}
                   </button>
+                )}
+                {partial && m.local && (
+                  // A conversion has no resume: the output is written in one
+                  // pass, so an incomplete directory can only be replaced.
+                  <span className="small muted">
+                    Incomplete conversion — Delete it, then convert again from Search (the source
+                    snapshot is still cached, so the re-run skips the download).
+                  </span>
                 )}
                 {!partial && (
                 <button

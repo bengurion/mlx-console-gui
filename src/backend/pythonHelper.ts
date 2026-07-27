@@ -113,7 +113,14 @@ export class PythonHelper {
       const child = spawn(python, [this.scriptPath, 'download', '--repo', repo], {
         env: this.spawnEnv(),
       })
-      const onAbort = () => child.kill('SIGTERM')
+      // SIGTERM first; a helper mid-write can ignore it, and an ignored cancel
+      // is how orphaned downloaders kept running behind the UI's back.
+      const onAbort = () => {
+        child.kill('SIGTERM')
+        setTimeout(() => {
+          if (child.exitCode === null) child.kill('SIGKILL')
+        }, 5000).unref()
+      }
       signal?.addEventListener('abort', onAbort)
 
       const rl = readline.createInterface({ input: child.stdout! })
@@ -137,7 +144,14 @@ export class PythonHelper {
       child.on('close', (code) => {
         signal?.removeEventListener('abort', onAbort)
         if (signal?.aborted) return reject(new Error('canceled'))
-        if (sawError) return reject(new Error(sawError))
+        if (sawError) {
+          // The helper only reports errors it has already diagnosed — a 404,
+          // a gated repo, a bad token. Retrying those as "connection lost"
+          // hid the real message for 80 seconds; mark them terminal.
+          const err = new Error(sawError) as Error & { terminal?: boolean }
+          err.terminal = true
+          return reject(err)
+        }
         if (code === 0) resolve()
         else reject(new Error(`download exited with code ${code}`))
       })

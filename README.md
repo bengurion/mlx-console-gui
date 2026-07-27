@@ -30,7 +30,7 @@ whichever starts the server, the others adopt it.
 | | **Desktop app** (`.dmg`) | **VS Code extension** (`.vsix`) | **CLI** (`mlx-console`) |
 | --- | --- | --- | --- |
 | **Role** | Owns the runtime: venv, models, daemon, the GUI | Editor integration: chat provider, `@mlx` participant, panels | Terminal commands + run-at-login |
-| **The UI** | The dashboard, in its own window | Panels mirror the app's daemon — the extension ships no runtime of its own once the app is installed | The same dashboard, in your browser |
+| **The UI** | The dashboard, in its own window | Chat surfaces only when the app is installed (the app owns the UI); full panels in embedded mode | The same dashboard, in your browser |
 | **Needs** | macOS on Apple Silicon | VS Code 1.125+ (and ideally the app) | Node + the app's install, or its own venv |
 | **Runs at login** | Optional (daemon keeps serving with the window closed) | No — dies with the editor | Yes, via launchd |
 | **Settings** | `<install root>/config.json` — the source of truth | Client-only keys (`mode`, `daemonUrl`) | The same root config |
@@ -227,7 +227,7 @@ npm run vsce:package    # README sync + production esbuild + vsce package
 Then install the packaged extension and reload the window:
 
 ```bash
-code --install-extension mlx-console-gui-0.0.23.vsix --force
+code --install-extension mlx-console-gui-0.0.28.vsix --force
 ```
 
 Open the **MLX Console GUI** icon in the activity bar afterwards.
@@ -253,7 +253,7 @@ the app bundle:
 
 ```bash
 "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" \
-  --install-extension mlx-console-gui-0.0.23.vsix --force
+  --install-extension mlx-console-gui-0.0.28.vsix --force
 ```
 
 </details>
@@ -495,10 +495,36 @@ expect that request to stall for the load time (seconds to minutes, size-depende
 tokens flow. Later requests naming the same model are instant; naming a *different* model
 drops the resident one and loads the new one inside that request.
 
+Requests through the **clean endpoint** are tracked: when a client (Claude Code, say) swaps
+the resident model inside one of its requests, the dashboard and the model registry follow.
+Requests straight to the **raw port are not** — `mlx_lm.server` has no "what is resident"
+endpoint to ask, so a model loaded that way shows up only in the memory numbers. If the
+dashboard's idea of the resident model ever looks wrong, a Launch click re-verifies against
+the server rather than trusting what was remembered.
+
 With a gpt-oss model resident, responses carry the harmony format (analysis channels and
 control tokens) that plain OpenAI clients render as noise. Enable `cleanEndpoint.enabled` for
 a second endpoint (on `cleanEndpoint.port`) that strips it and serves the final answer only —
 point ordinary clients there, and harmony-aware ones at the raw port.
+
+The clean endpoint additionally answers `POST /v1/messages` (and
+`/v1/messages/count_tokens`) in the **Anthropic Messages API**, translated to and from the
+upstream's chat completions — so Anthropic-protocol clients can use the local model too.
+Claude Code needs exactly this (it does not speak the OpenAI format), plus the exact repo id
+as its model name — anything else is answered "model not found":
+
+```bash
+export ANTHROPIC_BASE_URL=http://localhost:8082   # your cleanEndpoint.port
+export ANTHROPIC_API_KEY=not-checked
+export ANTHROPIC_MODEL="mlx-community/Qwen2.5-7B-Instruct-4bit"
+export ANTHROPIC_SMALL_FAST_MODEL="$ANTHROPIC_MODEL"  # subagents ask for this one
+claude
+```
+
+Or let the app write this for you: **Clients → Claude Code** detects every installed editor
+(VS Code, Cursor, Insiders, VSCodium) and writes the `claudeCode.environmentVariables` block
+into its settings.json — a timestamped backup first, comments and your other settings left
+intact.
 
 > [!IMPORTANT]
 > **There is no `/v1/embeddings`.** mlx-lm implements text-generation architectures only:
@@ -557,7 +583,7 @@ npm install
 npm run watch        # or: npm run compile — builds the extension, the CLI, the webview
                      # and the Electron main/preload bundles
 npm run typecheck
-npm test             # 233 unit tests, no VS Code host required
+npm test             # 279 unit tests, no VS Code host required
 npm run app:dev      # compile + launch the desktop app from source
 ```
 

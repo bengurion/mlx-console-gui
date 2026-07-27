@@ -213,7 +213,20 @@ export class HeadlessServer {
     } catch {
       // Raced us to exit.
     }
-    return { ok: true, message: `Force-stopped (pid ${pid}).` }
+    // Verify: a process wedged in an uninterruptible GPU call survives even
+    // SIGKILL, holding the port and the wired weights. Say so rather than
+    // reporting a stop that did not happen.
+    const killDeadline = Date.now() + STOP_TIMEOUT_MS
+    while (Date.now() < killDeadline) {
+      if (!pidAlive(pid)) return { ok: true, message: `Force-stopped (pid ${pid}).` }
+      await new Promise((r) => setTimeout(r, 200))
+    }
+    return {
+      ok: false,
+      message:
+        `pid ${pid} survived SIGKILL — likely stuck in GPU work. ` +
+        'It keeps its memory until the kernel call returns; check again shortly.',
+    }
   }
 
   async restart(): Promise<{ ok: boolean; message: string }> {
@@ -228,11 +241,11 @@ export class HeadlessServer {
    * finishes reading weights, and waiting minutes for that is not what someone
    * asking to shut everything down wants.
    */
-  async stopAll(): Promise<{ stopped: number[]; forced: number[] }> {
+  async stopAll(): Promise<{ stopped: number[]; forced: number[]; survivors: number[] }> {
     const pids = await findServerPids()
     const stopped: number[] = []
     const forced: number[] = []
-    if (!pids.length) return { stopped, forced }
+    if (!pids.length) return { stopped, forced, survivors: [] }
 
     for (const pid of pids) signal(pid, 'SIGTERM')
 
@@ -244,10 +257,18 @@ export class HeadlessServer {
       stopped.push(...gone)
       remaining = remaining.filter((pid) => pidAlive(pid))
     }
-    for (const pid of remaining) {
-      if (signal(pid, 'SIGKILL')) forced.push(pid)
+    for (const pid of remaining) signal(pid, 'SIGKILL')
+
+    // Verify the kills: an uninterruptible GPU call shrugs off SIGKILL until
+    // the driver returns, and an app that quits on an unverified "stopped"
+    // leaves a zombie holding tens of gigabytes wired. Report the survivors.
+    const killDeadline = Date.now() + STOP_TIMEOUT_MS
+    while (remaining.length && Date.now() < killDeadline) {
+      await new Promise((r) => setTimeout(r, 200))
+      forced.push(...remaining.filter((pid) => !pidAlive(pid)))
+      remaining = remaining.filter((pid) => pidAlive(pid))
     }
-    return { stopped, forced }
+    return { stopped, forced, survivors: remaining }
   }
 
   /**

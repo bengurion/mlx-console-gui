@@ -12,8 +12,8 @@ import type { ViewId } from '../../shared/protocol'
 
 /**
  * What a webview provider needs from its hub. `WebviewHub` satisfies this
- * with the real services behind it; `RemoteHub` satisfies it by proxying the
- * same protocol to the desktop app's daemon.
+ * with the real services behind it. (Panels only exist in embedded mode now —
+ * remote mode shows a welcome view pointing at the desktop app instead.)
  */
 export interface PanelHub {
   connect(sink: MessageSink, opts?: { sampleMetrics?: boolean }): { dispose(): void }

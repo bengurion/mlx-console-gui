@@ -63,16 +63,22 @@ const FIT_COLOR: Record<FitVerdict, string> = {
 }
 
 /** The verdict as a tinted pill — the one thing to see first on a card. */
-function FitPill({ fit }: { fit: FitVerdict }) {
+function FitPill({ fit, basis }: { fit: FitVerdict; basis?: 'as-is' | '4bit' }) {
   return (
     <span
       className="pill"
+      title={
+        basis === '4bit'
+          ? 'Judged by what a 4-bit conversion would occupy, not the full-precision download'
+          : undefined
+      }
       style={{
         color: FIT_COLOR[fit],
         background: `color-mix(in srgb, ${FIT_COLOR[fit]} 12%, transparent)`,
       }}
     >
       {FIT_LABEL[fit]}
+      {basis === '4bit' ? ' (4-bit)' : ''}
     </span>
   )
 }
@@ -104,6 +110,20 @@ export function SearchPage() {
   const [error, setError] = useState<string>()
   const [dl, setDl] = useState<Record<string, DownloadState>>({})
   const [conv, setConv] = useState<Record<string, ConvertState>>({})
+  // What is already on disk. Without it, every restart showed an enabled
+  // "Download" button for models sitting complete in the cache.
+  const [onDisk, setOnDisk] = useState<Record<string, 'complete' | 'partial'>>({})
+  const [counts, setCounts] = useState<{ mlx?: number; conv?: number }>({})
+
+  useEffect(
+    () =>
+      onPush<{ repo: string; complete?: boolean }[]>('models', (items) => {
+        const map: Record<string, 'complete' | 'partial'> = {}
+        for (const m of items) map[m.repo] = m.complete === false ? 'partial' : 'complete'
+        setOnDisk(map)
+      }),
+    [],
+  )
 
   useEffect(
     () =>
@@ -144,6 +164,7 @@ export function SearchPage() {
       setTruncated(found.truncated)
       setScanned(found.scanned)
       setExhausted(found.exhausted)
+      setCounts({ mlx: found.mlxTotal, conv: found.convertibleTotal })
       // Sizes arrive with the search now — the expanded Hub query carries the
       // safetensors metadata, so the second round of per-repo requests is gone.
     } catch (e) {
@@ -164,8 +185,9 @@ export function SearchPage() {
   const patch = (p: Partial<SearchQuery>) => setQuery((q) => ({ ...q, ...p }))
 
   const visible = query.onlyFits ? results.filter((m) => m.fit !== 'too-large') : results
-  const mlxCount = visible.filter((m) => m.format === 'mlx').length
-  const convCount = visible.filter((m) => m.format === 'convertible').length
+  // Whole-result-set counts from the host; the visible page as a fallback.
+  const mlxCount = counts.mlx ?? visible.filter((m) => m.format === 'mlx').length
+  const convCount = counts.conv ?? visible.filter((m) => m.format === 'convertible').length
 
   return (
     <div className="col">
@@ -284,6 +306,7 @@ export function SearchPage() {
             key={m.id}
             model={m}
             state={dl[m.id]}
+            disk={onDisk[m.id]}
             // A GGUF or pre-quantized card converts its *source* repo, so its
             // progress arrives under that id.
             convertState={conv[m.id] ?? (m.baseModel ? conv[m.baseModel] : undefined)}
@@ -313,10 +336,12 @@ function ResultCard({
   model,
   state,
   convertState,
+  disk,
 }: {
   model: ModelSummary
   state?: DownloadState
   convertState?: ConvertState
+  disk?: 'complete' | 'partial'
 }) {
   // The quantization choice used to be an editor quick pick, which the browser
   // dashboard could not show at all — the button simply did nothing there. It
@@ -325,15 +350,19 @@ function ResultCard({
   const [planError, setPlanError] = useState<string>()
   const sizeBytes = model.sizeBytes
   const fit: FitVerdict = model.fit ?? 'unknown'
+  // Disk state outranks the session's download list: the list is in-memory,
+  // and after a restart it knows nothing about models already in the cache.
   const label =
     state === 'downloading'
       ? 'Downloading…'
       : state === 'queued'
         ? 'Queued'
-        : state === 'done'
-          ? 'Downloaded'
-          : 'Download'
-  const busy = state === 'downloading' || state === 'queued' || state === 'done'
+        : state === 'done' || disk === 'complete'
+          ? 'Downloaded ✓'
+          : disk === 'partial'
+            ? 'Resume download'
+            : 'Download'
+  const busy = state === 'downloading' || state === 'queued' || state === 'done' || disk === 'complete'
   const format = model.format ?? (model.gguf ? 'unsupported' : 'convertible')
   const tags = model.tags
     .filter((t) => !['mlx', 'safetensors', 'transformers'].includes(t))
@@ -359,7 +388,7 @@ function ResultCard({
           cost, then the popularity noise — muted, since it never decides
           whether a model runs on this machine. */}
       <div className="row wrap small" style={{ gap: 10, alignItems: 'center' }}>
-        {format !== 'unsupported' && <FitPill fit={fit} />}
+        {format !== 'unsupported' && <FitPill fit={fit} basis={model.fitBasis} />}
         {sizeBytes ? (
           <strong
             title={
@@ -479,6 +508,14 @@ function ResultCard({
             {label}
           </button>
         )}
+        {format === 'mlx' && disk === 'complete' && (
+          <button
+            title="Load this model into the server (the first request does the load)"
+            onClick={() => void rpc('launchModel', { repo: model.id })}
+          >
+            Launch
+          </button>
+        )}
         {format === 'convertible' && (
           <button
             disabled={convertState === 'converting' || convertState === 'downloading'}
@@ -500,10 +537,10 @@ function ResultCard({
           >
             {convertState === 'converting' || convertState === 'downloading'
               ? 'Converting…'
-              : convertState === 'done'
-                ? 'Converted'
-                : plan
-                  ? 'Cancel'
+              : plan
+                ? 'Close'
+                : convertState === 'done'
+                  ? 'Convert again…'
                   : model.preQuantized && model.baseModel
                     ? 'Convert the source…'
                     : 'Convert to MLX…'}
@@ -512,15 +549,21 @@ function ResultCard({
         {format === 'unsupported' &&
           (model.baseModel ? (
             <button
+              disabled={convertState === 'converting' || convertState === 'downloading'}
               title={`Convert ${model.baseModel}, the safetensors model this was quantized from`}
               onClick={() => {
+                if (plan) return setPlan(undefined)
                 setPlanError(undefined)
                 void rpc<ConvertPlan>('getConvertPlan', { repo: model.baseModel })
                   .then(setPlan)
                   .catch((e: Error) => setPlanError(e.message))
               }}
             >
-              Convert the source instead…
+              {convertState === 'converting' || convertState === 'downloading'
+                ? 'Converting source…'
+                : plan
+                  ? 'Close'
+                  : 'Convert the source instead…'}
             </button>
           ) : (
             <button disabled>Unsupported</button>

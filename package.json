@@ -2,7 +2,7 @@
   "name": "mlx-console-gui",
   "displayName": "MLX Console GUI",
   "description": "Run and manage mlx-lm on Apple Silicon: download, convert and serve MLX models, watch GPU and memory use, and drive it from VS Code, a browser, or a headless daemon.",
-  "version": "0.0.23",
+  "version": "0.0.28",
   "publisher": "mlx-console",
   "author": {
     "name": "bengurion",
@@ -54,35 +54,53 @@
         {
           "type": "webview",
           "id": "mlxConsole.dashboard",
-          "name": "Dashboard"
+          "name": "Dashboard",
+          "when": "mlxConsole.embedded"
         },
         {
           "type": "webview",
           "id": "mlxConsole.models",
-          "name": "Models"
+          "name": "Models",
+          "when": "mlxConsole.embedded"
         },
         {
           "type": "webview",
           "id": "mlxConsole.search",
-          "name": "Search"
+          "name": "Search",
+          "when": "mlxConsole.embedded"
         },
         {
           "type": "webview",
           "id": "mlxConsole.downloads",
-          "name": "Downloads"
+          "name": "Downloads",
+          "when": "mlxConsole.embedded"
         },
         {
           "type": "webview",
           "id": "mlxConsole.server",
-          "name": "Settings"
+          "name": "Settings",
+          "when": "mlxConsole.embedded"
         },
         {
           "type": "webview",
           "id": "mlxConsole.clients",
-          "name": "Clients"
+          "name": "Clients",
+          "when": "mlxConsole.embedded"
+        },
+        {
+          "type": "tree",
+          "id": "mlxConsole.remote",
+          "name": "MLX Console",
+          "when": "!mlxConsole.embedded"
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "mlxConsole.remote",
+        "contents": "The MLX Console GUI app owns the runtime and the UI in this mode — chat, the model picker and @mlx stay right here in the editor.\n[Open MLX Console GUI](command:mlxConsole.openApp)\n[Open browser dashboard](command:mlxConsole.openWebUi)"
+      }
+    ],
     "languageModelChatProviders": [
       {
         "vendor": "mlx",
@@ -207,6 +225,11 @@
       {
         "command": "mlxConsole.showMenu",
         "title": "Show Menu",
+        "category": "MLX"
+      },
+      {
+        "command": "mlxConsole.openApp",
+        "title": "Open the MLX Console GUI App",
         "category": "MLX"
       },
       {
@@ -449,6 +472,11 @@
       }
     }
   },
+  "overrides": {
+    "app-builder-lib": {
+      "@noble/hashes": "^1.8.0"
+    }
+  },
   "scripts": {
     "compile": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
@@ -469,6 +497,7 @@
     "electron": "^43.2.0",
     "electron-builder": "^26.15.3",
     "esbuild": "^0.28.1",
+    "jsonc-parser": "^3.3.1",
     "marked": "^18.0.7",
     "mermaid": "^11.16.0",
     "react": "^19.2.8",
